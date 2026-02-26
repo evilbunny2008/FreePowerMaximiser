@@ -1,5 +1,11 @@
 #!/usr/bin/python3
 
+"""
+
+This script is highly specalised to maximise the benefit of owning a home battery system and 3 hours of free power offered a day in Australia
+
+"""
+
 import argparse
 import configparser
 import json
@@ -77,7 +83,7 @@ def perform_download(url, filename):
 def get_wh_total(now, solcast_data):
 
     if not solcast_data:
-        return 0
+        return {"with": 0, "without": 0, "period": 0}
 
     period_wh = 0
     without_wh = 0
@@ -107,7 +113,7 @@ def get_wh_total2(now, fsolar_data):
     """
 
     if not fsolar_data:
-        return 0, 0
+        return {"with": 0, "without": 0, "period": 0}
 
     today = now.date()
     current_hour = now.hour
@@ -122,7 +128,7 @@ def get_wh_total2(now, fsolar_data):
     today_data = {dt: wh for dt, wh in parsed.items() if dt.date() == today}
 
     if not today_data:
-        return 0, 0
+        return {"with": 0, "without": 0, "period": 0}
 
     # Get cumulative Wh up to current hour
     current_wh = 0
@@ -509,11 +515,14 @@ def main():
     curr_kWhr = batt['residual']
 
     target_kWhr = round(max_kWhr * battery_target_percent / 100, 2)
+    discharge_target_kWhr = round(max_kWhr * battery_discharge_target_percent / 100, 2)
     min_grid_export_kWhr = round(max_kWhr * min_export_percent / 100, 2)
     curr_percent = round(curr_kWhr / max_kWhr * 100, 1)
 
     print(f"battery_target_percent: {battery_target_percent}%")
     print(f"target_kWhr: {round(target_kWhr, 2)}kWhrs")
+    print(f"battery_discharge_target_percent: {battery_discharge_target_percent}%")
+    print(f"discharge_target_kWhr: {round(discharge_target_kWhr, 2)}kWhrs")
     print(f"min_export_percent: {min_export_percent}%")
     print(f"min_grid_export_kWhr: {round(min_grid_export_kWhr, 2)}kWhrs")
     print(f"curr_percent: {curr_percent}%")
@@ -575,6 +584,9 @@ def main():
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
+
+            pprint(forecast1_dict)
+
             rest_of_today_kWhr1 = round(forecast1_dict["with"] * 0.8 / 1000, 2)
 
         if forecast2 is not None:
@@ -734,7 +746,7 @@ def main():
 
         print(f"max_kWhrs3 needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs3}kWhrs")
 
-        excess_kWhrs3 = curr_kWhr - target_kWhr - max_kWhrs1 - max_kWhrs3
+        excess_kWhrs3 = curr_kWhr - discharge_target_kWhr - max_kWhrs1 - max_kWhrs3
 
         print(f"excess_kWhrs3: {round(excess_kWhrs3, 2)}kWhrs")
 
@@ -791,6 +803,7 @@ if __name__ == "__main__":
     DEBUG = configParser.getboolean("Defaults", "debug", fallback = False)
 
     battery_target_percent = sanitise_percent(configParser.getfloat("Defaults", "target_percent", fallback = 80), False)
+    battery_discharge_target_percent = sanitise_percent(configParser.getfloat("Defaults", "discharge_target_percent", fallback = 80), False)
     battery_min_grid_percent = sanitise_percent(configParser.getfloat("Defaults", "min_grid_percent", fallback = 30), False)
     min_export_percent = sanitise_percent(configParser.getfloat("Defaults", "min_export_percent", fallback = 5), True)
 

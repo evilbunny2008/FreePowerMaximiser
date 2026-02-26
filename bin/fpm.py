@@ -380,7 +380,7 @@ def get_BOM_geohash(lat, lon):
 
     ret = None
     if os.path.exists(BOM_geohash):
-        with open(filename, "r") as f:
+        with open(BOM_geohash, "r") as f:
             ret = f.read()
 
     if ret is not None and len(ret) == 6:
@@ -511,6 +511,15 @@ def main():
         sys.exit()
     """
 
+    rest_of_today_kWhr1 = 0
+    rest_of_today_kWhr1a = 0
+    rest_of_today_kWhr1b = 0
+    rest_of_today_kWhr2 = 0
+    rest_of_today_kWhr3 = 0
+    rest_of_today_kWhr3a = 0
+    rest_of_today_kWhr3b = 0
+    rest_of_today_kWhr4 = 0
+
     start_hour = now.hour
     end_hour = be_start_hour
     if 10 <= now.hour < end_hour:
@@ -538,14 +547,12 @@ def main():
 
         print()
 
-        rest_of_today_kWhr1 = 0
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
 
             rest_of_today_kWhr1a = round(forecast1_dict["without"] * 0.8 / 1000, 2)
             rest_of_today_kWhr1b = round(forecast1_dict["period"] * 0.8 / 1000, 2)
 
-        rest_of_today_kWhr2 = 0
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
             rest_of_today_kWhr2 = round(forecast2_dict["with"] * 0.8 / 1000, 2)
@@ -554,14 +561,12 @@ def main():
 
         print(f"Solcast forecast for the rest of today: {round(max_pv_kWhrs1 + rest_of_today_kWhr2, 2)}kWhrs")
 
-        rest_of_today_kWhr3 = 0
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
 
             rest_of_today_kWhr3a = round(forecast3_dict["without"] * 0.8 / 1000, 2)
             rest_of_today_kWhr3b = round(forecast3_dict["period"] * 0.8 / 1000, 2)
 
-        rest_of_today_kWhr4 = 0
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
             rest_of_today_kWhr4 = round(forecast4_dict["with"] * 0.8 / 1000, 2)
@@ -705,7 +710,6 @@ def main():
         print(f"max_kWhrs needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs}kWhrs")
 
         excess_kWhrs = curr_kWhr - target_kWhr - max_kWhrs
-        excess_kWhrs = 5
 
         print(f"excess_kWhrs: {round(excess_kWhrs, 2)}kWhrs")
 

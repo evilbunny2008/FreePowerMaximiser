@@ -21,7 +21,7 @@ parent_dir = os.path.dirname(script_dir)
 cache_dir = os.path.join(parent_dir, "cache")
 os.makedirs(cache_dir, exist_ok=True)
 
-BOM_geohash = os.path.join(cache_dir, "bom-geohash.txt")
+BOM_geohash_filename = os.path.join(cache_dir, "bom-geohash.txt")
 BOM_filename = os.path.join(cache_dir, "bom.json")
 
 solcast_filename1 = os.path.join(cache_dir, "solcast1.json")
@@ -171,6 +171,12 @@ def day_name(days_ahead):
 def generate_periods(now, in_watts, time_needed):
 
     fdPwr = int(be_max_rate_kW * 1500)
+
+    if in_watts < 1:
+        in_watts = 1
+
+    if in_watts > fdPwr:
+        in_watts = fdPwr
 
     period1 = {"enable": 1,
               "startHour": 0,
@@ -379,8 +385,8 @@ def get_BOM_geohash(lat, lon):
         return None
 
     ret = None
-    if os.path.exists(BOM_geohash):
-        with open(BOM_geohash, "r") as f:
+    if os.path.exists(BOM_geohash_filename):
+        with open(BOM_geohash_filename, "r") as f:
             ret = f.read()
 
     if ret is not None and len(ret) == 6:
@@ -406,7 +412,7 @@ def get_BOM_geohash(lat, lon):
     if bom_geohash is None or len(bom_geohash) != 6:
         return None
 
-    with open(BOM_geohash, "w") as f:
+    with open(BOM_geohash_filename, "w") as f:
         f.write(bom_geohash)
 
     return bom_geohash
@@ -464,6 +470,32 @@ def get_BOM_hourly(now, start_hour, end_hour):
 
     return {"with": (fp_period + hours_without), "without": hours_without, "period": fp_period}
 
+def sanitise_percent(percent, can_be_zero):
+
+    if can_be_zero and percent < 0:
+        percent = 0
+
+    if not can_be_zero and percent < 10:
+        percent = 10
+
+    if percent > 100:
+        percent = 100
+
+    return percent
+
+def sanitise_kWhr(value, can_be_zero):
+
+    if can_be_zero and value < 0:
+        value = 0
+
+    if not can_be_zero and value < 0.1:
+        value = 0.1
+
+    if value > 10:
+        value = 10
+
+    return value
+
 def main():
 
     global min_grid_export_kWhr
@@ -505,75 +537,67 @@ def main():
 
     print(f"gen_kWhr: {round(gen_kWhr, 2)}kWhrs")
 
-    """
-    if now.hour >= be_start_hour:
-        print(f"After 6pm need to do tomorrow's forecast here!")
-        sys.exit()
-    """
-
     rest_of_today_kWhr1 = 0
-    rest_of_today_kWhr1a = 0
-    rest_of_today_kWhr1b = 0
     rest_of_today_kWhr2 = 0
+    rest_of_today_kWhr2a = 0
+    rest_of_today_kWhr2b = 0
     rest_of_today_kWhr3 = 0
-    rest_of_today_kWhr3a = 0
-    rest_of_today_kWhr3b = 0
     rest_of_today_kWhr4 = 0
+    rest_of_today_kWhr4a = 0
+    rest_of_today_kWhr4b = 0
 
     start_hour = now.hour
     end_hour = be_start_hour
     if 10 <= now.hour < end_hour:
 
         # Fetch and save or load forecasts
-        if DEBUG:
+        if fsolar_url1 is not None and fsolar_url1.startswith("https://") or fsolar_url2 is not None and fsolar_url2.startswith("https://") and DEBUG:
             print()
             print("Fetching and/or loading forecast.solar forecasts...")
 
-        if fsolar_url1 is not None and fsolar_url1 != "":
+        if fsolar_url1 is not None and fsolar_url1.startswith("https://"):
             forecast3 = get_json(now, fsolar_url1, fsolar_filename1)
 
-        if fsolar_url2 is not None and fsolar_url2 != "":
+        if fsolar_url2 is not None and fsolar_url2.startswith("https://"):
             forecast4 = get_json(now, fsolar_url2, fsolar_filename2)
 
-        if DEBUG:
+        if solcast_url1 is not None and solcast_url1.startswith("https://") or solcast_url2 is not None and solcast_url2.startswith("https://") and DEBUG:
             print()
             print("Fetching and/or loading Solcast forecasts...")
 
-        if solcast_url1 is not None and solcast_url1 != "":
+        if solcast_url1 is not None and solcast_url1.startswith("https://"):
             forecast1 = get_json(now, solcast_url1, solcast_filename1)
 
-        if solcast_url2 is not None and solcast_url2 != "":
+        if solcast_url2 is not None and solcast_url2.startswith("https://"):
             forecast2 = get_json(now, solcast_url2, solcast_filename2)
 
         print()
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
-
-            rest_of_today_kWhr1a = round(forecast1_dict["without"] * 0.8 / 1000, 2)
-            rest_of_today_kWhr1b = round(forecast1_dict["period"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr1 = round(forecast1_dict["with"] * 0.8 / 1000, 2)
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
-            rest_of_today_kWhr2 = round(forecast2_dict["with"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr2a = round(forecast2_dict["without"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr2b = round(forecast2_dict["period"] * 0.8 / 1000, 2)
 
-        max_pv_kWhrs1 = round(rest_of_today_kWhr1a + rest_of_today_kWhr1b, 2)
+        rest_of_today_kWhr2 = round(forecast2_dict["with"] * 0.8 / 1000, 2)
 
-        print(f"Solcast forecast for the rest of today: {round(max_pv_kWhrs1 + rest_of_today_kWhr2, 2)}kWhrs")
+        print(f"Solcast forecast for the rest of today: {round(rest_of_today_kWhr1 + rest_of_today_kWhr2, 2)}kWhrs")
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
-
-            rest_of_today_kWhr3a = round(forecast3_dict["without"] * 0.8 / 1000, 2)
-            rest_of_today_kWhr3b = round(forecast3_dict["period"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr3 = round(forecast3_dict["with"] * 0.8 / 1000, 2)
 
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
-            rest_of_today_kWhr4 = round(forecast4_dict["with"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr4a = round(forecast4_dict["without"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr4b = round(forecast4_dict["period"] * 0.8 / 1000, 2)
 
-        max_pv_kWhrs3 = round(rest_of_today_kWhr3a + rest_of_today_kWhr3b, 2)
+        rest_of_today_kWhr4 = round(forecast4_dict["with"] * 0.8 / 1000, 2)
 
-        print(f"forecast.solar forecast for the rest of today: {round(max_pv_kWhrs3 + rest_of_today_kWhr4, 2)}kWhrs")
+        print(f"forecast.solar forecast for the rest of today: {round(rest_of_today_kWhr3 + rest_of_today_kWhr4, 2)}kWhrs")
 
         print()
 
@@ -608,56 +632,57 @@ def main():
 
     print(f"approx_aircon_usage1 for 12am to {fp_start_hour}am and {(fp_end_hour - 12)}pm to {(be_start_hour - 12)}pm: {approx_aircon_usage1}kWhrs")
 
-    max_kWhrs = round(approx_aircon_usage1 + house_usage_kWhrs1, 2)
+    max_kWhrs1 = round(approx_aircon_usage1 + house_usage_kWhrs1, 2)
 
-    print(f"max_kWhrs needed until {(be_start_hour - 12)}pm: {max_kWhrs}kWhrs")
+    print(f"max_kWhrs1 needed until {(be_start_hour - 12)}pm: {max_kWhrs1}kWhrs")
 
     print()
 
     charge_rate_watts = 1
+    est_kWhrs1 = est_kWhrs2 = 0
     if now.hour < be_start_hour:
-        max_kWhrs = rest_of_today_kWhr1a + rest_of_today_kWhr2 - max_kWhrs
+        est_kWhrs1 = rest_of_today_kWhr1 + rest_of_today_kWhr2a - max_kWhrs1
 
-        if max_kWhrs < 0:
+        if est_kWhrs1 < 0:
             print(f"A negative result below indicates there will be more consumption than generation")
 
-        print(f"Solcast predicts max_kWhrs produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(max_kWhrs, 2)}kWhrs")
+        print(f"Solcast predicts est_kWhrs1 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(est_kWhrs1, 2)}kWhrs")
 
-        max_kWhrs2 = rest_of_today_kWhr3a + rest_of_today_kWhr4 - max_kWhrs
+        est_kWhrs2 = rest_of_today_kWhr3 + rest_of_today_kWhr4a - max_kWhrs1
 
-        if max_kWhrs2 < 0:
+        if est_kWhrs2 < 0:
             print(f"A negative result below indicates there will be more consumption than generation")
 
-        print(f"Forecast.solar max_kWhrs2 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(max_kWhrs2, 2)}kWhrs")
+        print(f"Forecast.solar max_kWhrs2 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(est_kWhrs2, 2)}kWhrs")
 
-        left_in_battery_kWhrs = curr_kWhr + max_kWhrs
+        left_in_battery_kWhrs1 = curr_kWhr + est_kWhrs1
 
-        print(f"Solcast predicts left_in_battery_kWhrs at {(be_start_hour - 12)}pm: {round(left_in_battery_kWhrs, 2)}kWhrs")
+        print(f"Solcast predicts left_in_battery_kWhrs1 at {(be_start_hour - 12)}pm: {round(left_in_battery_kWhrs1, 2)}kWhrs")
 
-        left_in_battery_kWhrs2 = curr_kWhr + max_kWhrs2
+        left_in_battery_kWhrs2 = curr_kWhr + est_kWhrs2
 
         print(f"Forecast.solar predicts left_in_battery_kWhrs2 at {(be_start_hour - 12)}pm: {round(left_in_battery_kWhrs2, 2)}kWhrs")
 
-        new_batt_percent = round(left_in_battery_kWhrs / max_kWhr * 100.0, 1)
+        new_batt_percent1 = round(left_in_battery_kWhrs1 / est_kWhrs1 * 100.0, 1)
 
-        print(f"Solcast predicts the Battery capacity at {(be_start_hour - 12)}pm: {new_batt_percent}%")
+        print(f"Solcast predicts the Battery capacity at {(be_start_hour - 12)}pm: {round(new_batt_percent1, 1)}%")
 
-        new_batt_percent2 = round(left_in_battery_kWhrs2 / max_kWhr * 100.0, 1)
+        new_batt_percent2 = round(left_in_battery_kWhrs2 / est_kWhrs2 * 100.0, 1)
 
         print(f"Forecast.solar predicts the battery capacity at {(be_start_hour - 12)}pm: {new_batt_percent2}%")
 
         # Handle solcast.com.au forecast
-        if abs(left_in_battery_kWhrs) < min_grid_export_kWhr:
+        if abs(left_in_battery_kWhrs1) < min_grid_export_kWhr:
             print("Solcast says we will get enough power from the solar panels as needed for the house until {(be_start_hour - 12)}pm today...")
-        elif left_in_battery_kWhrs < target_kWhr:
-            need_kWhrs1 = target_kWhr - left_in_battery_kWhrs
+        elif left_in_battery_kWhrs1 < target_kWhr:
+            need_kWhrs1 = target_kWhr - left_in_battery_kWhrs1
             if fp_start_hour <= now.hour < fp_end_hour:
-                charge_rate_watts = need_watts1 = round(need_kWhrs1 * 1000 / less_hrs)
+                charge_rate_watts1 = need_watts1 = round(need_kWhrs1 * 1000 / less_hrs)
                 print(f"Solcast says we need to pull {need_watts1} watts for a total of {round(need_kWhrs1, 2)}kWhrs from the grid between {fp_start_hour}am and {(fp_end_hour - 12)}pm")
             else:
                 print(f"Solcast says we will have a deficit of {round(need_kWhrs1, 2)}kWhrs")
         else:
-            surplus_kWhrs1 = round(left_in_battery_kWhrs - target_kWhr, 2)
+            surplus_kWhrs1 = round(left_in_battery_kWhrs1 - target_kWhr, 2)
             print(f"Solcast says we will have a surplus of {surplus_kWhrs1}kWhrs today")
 
         # Handle forecast.solar forecast
@@ -690,14 +715,14 @@ def main():
         curr_start_sec = 0
 
     time_needed = 0
-    if curr_start_hour < be_end_hour:
+    if be_start_hour <= curr_start_hour < be_end_hour:
         time_period_in_hours3 = (be_end_hour - curr_start_hour) - (curr_start_min / 60) - (curr_start_sec / 3600)
 
         print(f"time_period_in_hours3: {round(time_period_in_hours3, 2)} hrs")
 
-        house_usage_kWhrs = round(house_usage * time_period_in_hours3, 2)
+        house_usage_kWhrs2 = round(house_usage * time_period_in_hours3, 2)
 
-        print(f"house_usage_kWhrs from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {round(house_usage_kWhrs, 2)}kWhrs")
+        print(f"house_usage_kWhrs from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {round(house_usage_kWhrs2, 2)}kWhrs")
 
         BOM_dict = get_BOM_hourly(now, be_start_hour, be_end_hour)
 
@@ -705,22 +730,22 @@ def main():
 
         print(f"approx_aircon_usage2 from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {approx_aircon_usage2}kWhrs")
 
-        max_kWhrs = round(approx_aircon_usage2 + house_usage_kWhrs, 2)
+        max_kWhrs3 = round(approx_aircon_usage2 + house_usage_kWhrs2, 2)
 
-        print(f"max_kWhrs needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs}kWhrs")
+        print(f"max_kWhrs3 needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs3}kWhrs")
 
-        excess_kWhrs = curr_kWhr - target_kWhr - max_kWhrs
+        excess_kWhrs3 = curr_kWhr - target_kWhr - max_kWhrs1 - max_kWhrs3
 
-        print(f"excess_kWhrs: {round(excess_kWhrs, 2)}kWhrs")
+        print(f"excess_kWhrs3: {round(excess_kWhrs3, 2)}kWhrs")
 
-        if now.hour < be_end_hour and excess_kWhrs > min_grid_export_kWhr:
+        if now.hour < be_end_hour and excess_kWhrs3 > min_grid_export_kWhr:
 
             if be_start_hour <= now.hour < be_end_hour:
                 max_seconds = (be_end_hour - curr_start_hour - curr_start_min / 60 - curr_start_sec / 3600) * 3600
             else:
                 max_seconds = (be_end_hour - be_start_hour) * 3600
 
-            time_needed = excess_kWhrs / be_max_rate_kW * 3600
+            time_needed = excess_kWhrs3 / be_max_rate_kW * 3600
 
             if time_needed < 0:
                 time_needed = 0
@@ -765,13 +790,13 @@ if __name__ == "__main__":
 
     DEBUG = configParser.getboolean("Defaults", "debug", fallback = False)
 
-    battery_target_percent = configParser.getfloat("Defaults", "target_percent", fallback = 80)
-    battery_min_grid_percent = configParser.getfloat("Defaults", "min_grid_percent", fallback = 30)
-    min_export_percent = configParser.getfloat("Defaults", "min_export_percent", fallback = 5)
+    battery_target_percent = sanitise_percent(configParser.getfloat("Defaults", "target_percent", fallback = 80), False)
+    battery_min_grid_percent = sanitise_percent(configParser.getfloat("Defaults", "min_grid_percent", fallback = 30), False)
+    min_export_percent = sanitise_percent(configParser.getfloat("Defaults", "min_export_percent", fallback = 5), True)
 
-    house_usage = configParser.getfloat("Defaults", "average_usage", fallback = 0.6)
+    house_usage = sanitise_kWhr(configParser.getfloat("Defaults", "average_usage", fallback = 0.6), False)
 
-    aircon_usage = configParser.getfloat("Defaults", "aircon_usage", fallback = 0.6)
+    aircon_usage = sanitise_kWhr(configParser.getfloat("Defaults", "aircon_usage", fallback = 0.6), True)
     aircon_cool_temp = configParser.getfloat("Defaults", "aircon_cool_temp", fallback = 26)
     aircon_heat_temp = configParser.getfloat("Defaults", "aircon_heat_temp", fallback = 23)
 
@@ -780,6 +805,10 @@ if __name__ == "__main__":
     lon = configParser.getfloat("Defaults", "lon", fallback = 0.0)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
+
+    if foxess_apikey is None:
+        print(f"This program has been specifically created for using with Fox ESS Batteries and their OpenAPI service, if you have such a system you can go to their web portal to obtain a copy of your API key.")
+        sys.exit()
 
     solcast_apikey = configParser.get("Solcast", "apikey", fallback = None)
     solcast_siteid1 = configParser.get("Solcast", "siteid1", fallback = None)
@@ -795,12 +824,46 @@ if __name__ == "__main__":
     fp_start_hour = configParser.getint("FreePowerTime", "start_hour", fallback = 11)
     fp_end_hour = configParser.getint("FreePowerTime", "end_hour", fallback = 14)
 
+    if fp_start_hour < 0:
+        print(f"You set the free power start hour less than 0 or midnight.")
+        sys.exit()
+
+    if fp_end_hour > 23:
+        print(f"You set the free power end hour greater than 23 or after 11pm.")
+        sys.exit()
+
+    if fp_start_hour >= fp_end_hour:
+        print(f"You set the free power start hour to equal or be greater than the free power end hour.")
+        sys.exit()
+
     be_start_hour = configParser.getint("BestExportTime", "start_hour", fallback = 18)
     be_end_hour = configParser.getint("BestExportTime", "end_hour", fallback = 20)
     be_max_rate_kW = configParser.getfloat("BestExportTime", "max_rate_kW", fallback = 5)
     be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
 
-    BOM_geohash = get_BOM_geohash(lat, lon)
+    if be_start_hour < 0:
+        print(f"You set the best export time start hour less than 0 or midnight.")
+        sys.exit()
+
+    if be_end_hour > 23:
+        print(f"You set the best export time end hour greater than 23 or after 11pm.")
+        sys.exit()
+
+    if be_start_hour >= be_end_hour:
+        print(f"You set the best export time start hour to equal or be greater than the best export time end hour.")
+        sys.exit()
+
+    if not (be_end_hour <= fp_start_hour or fp_end_hour <= be_start_hour):
+        print(f"You set the best export time to overlap with the free power time.")
+        sys.exit()
+
+    BOM_geohash = None
+    if -44 < lat < -10 and 113 < lon < 154:
+        BOM_geohash = get_BOM_geohash(lat, lon)
+
+    if BOM_geohash is None or len(BOM_geohash) != 6 or tz is None or not tz.startswith("Australia/"):
+        print("At this stage this program is specifically coded for use in Australia and utilises BoM.gov.au hourly forecasts to estimate air con usage.")
+        sys.exit()
 
     LOCAL_TZ = ZoneInfo(tz)
     UTC_TZ = ZoneInfo("UTC")
@@ -814,8 +877,7 @@ if __name__ == "__main__":
         datetime.combine(today, time(13, 30), tzinfo=LOCAL_TZ),   # 1:30 PM
     ]
 
-    if BOM_geohash is not None and len(BOM_geohash) == 6:
-        BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
+    BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
 
     if fsolar_tilt1 != -1:
         fsolar_url1 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt1}/{fsolar_az1}/{fsolar_size1}.json?limit=1&start=now"
@@ -832,13 +894,6 @@ if __name__ == "__main__":
 
     if solcast_apikey is not None and solcast_apikey != "" and solcast_siteid2 is not None and solcast_siteid2 != "":
         solcast_url2 = f"https://api.solcast.com.au/rooftop_sites/{solcast_siteid2}/forecasts?format=json&api_key={solcast_apikey}"
-
-    """
-    print(f"fsolar_url1: {fsolar_url1}")
-    print(f"fsolar_url2: {fsolar_url2}")
-
-    sys.exit()
-    """
 
     openapi.api_key = foxess_apikey
     openapi.time_zone = tz

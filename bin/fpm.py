@@ -6,7 +6,6 @@ import json
 import openapi
 import os
 import requests
-import setproctitle
 import sys
 
 from datetime import date, datetime, time
@@ -380,7 +379,7 @@ def get_BOM_geohash(lat, lon):
         return None
 
     ret = None
-    if os.path.exists(filename):
+    if os.path.exists(BOM_geohash):
         with open(filename, "r") as f:
             ret = f.read()
 
@@ -407,7 +406,7 @@ def get_BOM_geohash(lat, lon):
     if bom_geohash is None or len(bom_geohash) != 6:
         return None
 
-    with open(filename, "w") as f:
+    with open(BOM_geohash, "w") as f:
         f.write(bom_geohash)
 
     return bom_geohash
@@ -743,7 +742,6 @@ def main():
         print("The new periods match the old periods... skipping uploading new periods...")
 
 if __name__ == "__main__":
-    setproctitle.setproctitle("FreePowerMaximiser")
 
     parser = argparse.ArgumentParser(description="Python script to tweak Fox ESS battery settings")
     parser.add_argument("-c", "--config", type = str, default="/etc/fpm.conf",

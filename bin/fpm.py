@@ -739,43 +739,43 @@ def main():
     time_needed = 0
     if time_period_in_hours3 > 0:
 
-        if be_start >= now:
-            print(f"time_period_in_hours3 from now to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
-        else:
-            print(f"time_period_in_hours3 from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
-
-        house_usage_kWhrs2 = round(house_usage * time_period_in_hours3, 2)
-
-        if be_start >= now:
-            print(f"house_usage_kWhrs from now to {(be_end.hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
-        else:
-            print(f"house_usage_kWhrs from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
-
         start_time = be_start
         if start_time < now:
              start_time = now
+
+        if start_time == be_start:
+            print(f"time_period_in_hours3 from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
+        else:
+            print(f"time_period_in_hours3 from now to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
+
+        house_usage_kWhrs2 = round(house_usage * time_period_in_hours3, 2)
+
+        if start_time == be_start:
+            print(f"house_usage_kWhrs from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
+        else:
+            print(f"house_usage_kWhrs from now to {(be_end.hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
 
         BOM_dict = get_BOM_hourly(now, start_time, be_end)
 
         approx_aircon_usage2 = round(BOM_dict["with"] * aircon_usage, 2)
 
         if start_time == be_start:
-            print(f"approx_aircon_usage2 from {(start_time.hour - 12)}pm to {(be_end.hour - 12)}pm: {approx_aircon_usage2}kWhrs")
+            print(f"approx_aircon_usage2 from {(start_time.hour - 12)}pm to {(be_end.hour - 12)}pm: {approx_aircon_usage2:.2f}kWhrs")
         else:
-            print(f"approx_aircon_usage2 from now to {(be_end.hour - 12)}pm: {approx_aircon_usage2}kWhrs")
+            print(f"approx_aircon_usage2 from now to {(be_end.hour - 12)}pm: {approx_aircon_usage2:.2f}kWhrs")
 
         max_kWhrs3 = round(approx_aircon_usage2 + house_usage_kWhrs2, 2)
 
         if start_time == be_start:
-            print(f"max_kWhrs3 needed from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {max_kWhrs3}kWhrs")
+            print(f"max_kWhrs3 needed from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
         else:
-            print(f"max_kWhrs3 needed from now to {(be_end.hour - 12)}pm: {max_kWhrs3}kWhrs")
+            print(f"max_kWhrs3 needed from now to {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
 
         print()
 
         max_kWhrs = max_kWhrs1 + max_kWhrs3
 
-        print(f"max_kWhrs needed to {(be_end.hour - 12)}pm: {max_kWhrs}kWhrs")
+        print(f"max_kWhrs needed to {(be_end.hour - 12)}pm: {max_kWhrs:.2f}kWhrs")
 
         excess_kWhrs = curr_kWhr + rest_of_today_kWhr1 + rest_of_today_kWhr2b - discharge_target_kWhr - max_kWhrs
 

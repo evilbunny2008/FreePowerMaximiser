@@ -14,7 +14,8 @@ import os
 import requests
 import sys
 
-from datetime import date, datetime, time
+from astral import Observer, sun, SunDirection
+from datetime import date, datetime, time, timedelta
 from itertools import zip_longest
 from pprint import pprint
 from zoneinfo import ZoneInfo
@@ -176,7 +177,7 @@ def day_name(days_ahead):
     target = datetime.now(LOCAL_TZ) + timedelta(days=days_ahead)
     return target.strftime("%A")  # e.g. "Monday"
 
-def generate_periods(now, in_watts, time_needed):
+def generate_periods(now, in_watts, time_needed, be_start, be_end):
 
     fdPwr = int(be_max_rate_kW * 1500)
 
@@ -185,6 +186,9 @@ def generate_periods(now, in_watts, time_needed):
 
     if in_watts > fdPwr:
         in_watts = fdPwr
+
+    if time_needed < 0:
+        time_needed = 0
 
     period1 = {"enable": 1,
               "startHour": 0,
@@ -216,56 +220,25 @@ def generate_periods(now, in_watts, time_needed):
                              "reactivePower": 0},
               "workMode": "ForceCharge"}
 
-    if time_needed > 0 and now.hour < be_end_hour:
-
-        curr_start_hour = be_start_hour
-        curr_start_min = 0
-        if be_start_hour <= now.hour:
-            curr_start_hour = now.hour
-            curr_start_min = now.minute
+    if time_needed > 0 and now < be_end:
 
         if DEBUG:
-            print(f"curr_start_hour: {curr_start_hour}")
-            print(f"curr_start_min: {curr_start_min}")
+            print(f"be_start.hour: {be_start.hour}")
+            print(f"be_start.minute: {be_start.minute}")
 
-        end_time = int(be_end_hour * 3600)
-
-        if DEBUG:
-            print(f"end_time: {end_time}s")
-
-        now_time = int(curr_start_hour * 3600 + curr_start_min * 60 + 60)
+        end_time = now + timedelta(seconds=time_needed)
+        if end_time > be_end:
+            end_time = be_end
 
         if DEBUG:
-            print(f"now_time: {now_time}s")
-
-        max_time = int(end_time - now_time)
-
-        if DEBUG:
-            print(f"max_time: {max_time}s")
-
-        if time_needed > max_time:
-            time_needed = max_time
-
-        end_time = int(now_time + time_needed)
-
-        if DEBUG:
-            print(f"end_time: {end_time}s")
-
-        end_hour, remainder = divmod(end_time, 3600)
-        end_minute, end_second = divmod(remainder, 60)
-
-        end_hour = int(end_hour)
-        end_minute = int(end_minute)
-
-        if DEBUG:
-            print(f"end_hour: {end_hour}")
-            print(f"end_minute: {end_minute}")
+            print(f"end_time.hour: {end_time.hour}")
+            print(f"end_time.minute: {end_time.minute}")
 
         period3 = {"enable": 1,
               "startHour": (fp_end_hour - 1),
               "startMinute": 58,
-              "endHour": curr_start_hour,
-              "endMinute": curr_start_min,
+              "endHour": be_start.hour,
+              "endMinute": be_start.minute,
               "extraParam": {"exportLimit": 100000,
                              "fdPwr": fdPwr,
                              "fdSoc": battery_min_grid_percent,
@@ -277,10 +250,10 @@ def generate_periods(now, in_watts, time_needed):
               "workMode": "SelfUse"}
 
         period4 = {"enable": 1,
-              "startHour": curr_start_hour,
-              "startMinute": curr_start_min,
-              "endHour": end_hour,
-              "endMinute": end_minute,
+              "startHour": be_start.hour,
+              "startMinute": be_start.minute,
+              "endHour": end_time.hour,
+              "endMinute": end_time.minute,
               "extraParam": {"exportLimit": 100000,
                   "fdPwr": int(be_max_rate_kW * 1000),
                   "fdSoc": battery_min_grid_percent,
@@ -292,8 +265,8 @@ def generate_periods(now, in_watts, time_needed):
               "workMode": "ForceDischarge"}
 
         period5 = {"enable": 1,
-              "startHour": end_hour,
-              "startMinute": end_minute,
+              "startHour": end_time.hour,
+              "startMinute": end_time.minute,
               "endHour": 23,
               "endMinute": 59,
               "extraParam": {"exportLimit": 100000,
@@ -537,9 +510,6 @@ def main():
 
     global min_grid_export_kWhr
 
-    now = datetime.now(LOCAL_TZ)
-    #now = datetime(2026, 2, 26, 18, 0, 0, tzinfo=LOCAL_TZ)
-
     batt = openapi.get_battery()
     report = openapi.get_report(v="PVEnergyTotal")
 
@@ -593,9 +563,7 @@ def main():
     max_kWhrs1 = 0
     charge_rate_watts = 1
     est_kWhrs1 = est_kWhrs2 = 0
-    start_hour = now.hour
-    end_hour = be_start_hour
-    if now.hour < end_hour:
+    if now < solar_dropoff:
 
         # Fetch and save or load forecasts
         if (fsolar_url1 is not None and fsolar_url1.startswith("https://") or fsolar_url2 is not None and fsolar_url2.startswith("https://")) and DEBUG:
@@ -647,19 +615,23 @@ def main():
 
         print()
 
-        time_period_in_hours1 = end_hour - now.hour - (now.minute / 60) - (now.second / 3600)
+        time_period_in_hours1 = (solar_dropoff - now).total_seconds() / 3600
 
         if time_period_in_hours1 < 0:
             time_period_in_hours1 = 0
 
         print(f"time_period_in_hours1: {time_period_in_hours1:.2f} hrs (counting {fp_start_hour}am to {(fp_end_hour - 12)}pm) until {(end_hour - 12)}pm")
 
-        less_hrs = 0
-        if now.hour < fp_end_hour:
-            if now.hour >= fp_start_hour:
-                less_hrs = fp_end_hour - now.hour - (now.minute / 60) - (now.second / 3600)
-            else:
-                less_hrs = 3
+        start_period = datetime(now.year, now.month, now.day, fp_start_hour, 0, 0, tzinfo=LOCAL_TZ)
+        end_period = datetime(now.year, now.month, now.day, fp_end_hour, 0, 0, tzinfo=LOCAL_TZ)
+
+        if start_period <= now < end_period:
+            start_period = now
+
+        less_hrs = (end_period - start_period).total_seconds() / 3600
+
+        if now >= end_period:
+            less_hrs = 0
 
         print(f"less_hrs: {less_hrs:.2f}hrs")
 
@@ -743,32 +715,22 @@ def main():
 
         print()
 
-    if now.hour < be_start_hour:
-        curr_start_hour = be_start_hour
-        curr_start_min = 0
-        curr_start_sec = 0
-    elif be_start_hour <= now.hour < be_end_hour:
-        curr_start_hour = now.hour
-        curr_start_min = now.minute
-        curr_start_sec = now.second
-    else:
-        curr_start_hour = be_end_hour
-        curr_start_min = 0
-        curr_start_sec = 0
+    time_period_in_hours3 = (be_end - be_start).total_seconds() / 3600
+
+    if now >= be_end:
+        time_period_in_hours3 = 0
 
     time_needed = 0
-    if be_start_hour <= curr_start_hour < be_end_hour:
+    if time_period_in_hours3 > 0:
 
-        time_period_in_hours3 = (be_end_hour - curr_start_hour) - (curr_start_min / 60) - (curr_start_sec / 3600)
-
-        if curr_start_hour >= now.hour:
+        if be_start >= now:
             print(f"time_period_in_hours3 from now to {(be_end_hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
         else:
-            print(f"time_period_in_hours3 from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
+            print(f"time_period_in_hours3 from {(be_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
 
         house_usage_kWhrs2 = round(house_usage * time_period_in_hours3, 2)
 
-        if curr_start_hour >= now.hour:
+        if be_start >= now:
             print(f"house_usage_kWhrs from now to {(be_end_hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
         else:
             print(f"house_usage_kWhrs from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {house_usage_kWhrs2:.2f}kWhrs")
@@ -777,14 +739,14 @@ def main():
 
         approx_aircon_usage2 = round(BOM_dict["without"] * aircon_usage, 2)
 
-        if curr_start_hour >= now.hour:
+        if be_start >= now:
             print(f"approx_aircon_usage2 from now to {(be_end_hour - 12)}pm: {approx_aircon_usage2}kWhrs")
         else:
             print(f"approx_aircon_usage2 from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {approx_aircon_usage2}kWhrs")
 
         max_kWhrs3 = round(approx_aircon_usage2 + house_usage_kWhrs2, 2)
 
-        if curr_start_hour >= now.hour:
+        if be_start >= now:
             print(f"max_kWhrs3 needed from now to {(be_end_hour - 12)}pm: {max_kWhrs3}kWhrs")
         else:
             print(f"max_kWhrs3 needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs3}kWhrs")
@@ -799,12 +761,9 @@ def main():
 
         print(f"excess_kWhrs to {(be_end_hour - 12)}pm: {excess_kWhrs:.2f}kWhrs")
 
-        if now.hour < be_end_hour and excess_kWhrs > min_grid_export_kWhr:
+        if excess_kWhrs > min_grid_export_kWhr:
 
-            if be_start_hour <= now.hour < be_end_hour:
-                max_seconds = (be_end_hour - curr_start_hour - curr_start_min / 60 - curr_start_sec / 3600) * 3600
-            else:
-                max_seconds = (be_end_hour - be_start_hour) * 3600
+            max_seconds = (be_end - be_start).total_seconds()
 
             time_needed = excess_kWhrs / be_max_rate_kW * 3600
 
@@ -822,7 +781,7 @@ def main():
 
         print()
 
-    new_periods = generate_periods(now, charge_rate_watts, time_needed)
+    new_periods = generate_periods(now, charge_rate_watts, time_needed, be_start, be_end)
 
     curr_periods = openapi.get_schedule()["periods"]
 
@@ -880,6 +839,7 @@ if __name__ == "__main__":
     tz = configParser.get("Defaults", "timezone", fallback = "UTC")
     lat = configParser.getfloat("Defaults", "lat", fallback = 0.0)
     lon = configParser.getfloat("Defaults", "lon", fallback = 0.0)
+    drop_off_angle = configParser.getfloat("Defaults", "drop_off_angle", fallback = 15)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
 
@@ -949,12 +909,36 @@ if __name__ == "__main__":
 
     # Scheduled download times
     SCHEDULED_TIMES = [
-        datetime.combine(today, time(10, 50), tzinfo=LOCAL_TZ),  # 10:50 AM
-        datetime.combine(today, time(12, 0), tzinfo=LOCAL_TZ),   # 12:00 PM
-        datetime.combine(today, time(12, 30), tzinfo=LOCAL_TZ),   # 12:30 PM
-        datetime.combine(today, time(13, 0), tzinfo=LOCAL_TZ),   # 1:00 PM
-        datetime.combine(today, time(13, 30), tzinfo=LOCAL_TZ),   # 1:30 PM
+        datetime.combine(today, time(10, 50), tzinfo=LOCAL_TZ),
+        datetime.combine(today, time(12, 0), tzinfo=LOCAL_TZ),
+        datetime.combine(today, time(13, 0), tzinfo=LOCAL_TZ),
+        datetime.combine(today, time(13, 30), tzinfo=LOCAL_TZ),
     ]
+
+    now = datetime.now(LOCAL_TZ)
+    #now = datetime(2026, 1, 1, 10, 0, 0, tzinfo=LOCAL_TZ)
+    #now = datetime(2026, 2, 28, 10, 0, 0, tzinfo=LOCAL_TZ)
+
+    be_start = datetime(now.year, now.month, now.day, be_start_hour, 0, 0, tzinfo=LOCAL_TZ)
+    be_end = datetime(now.year, now.month, now.day, be_end_hour, 0, 0, tzinfo=LOCAL_TZ)
+
+    if be_start <= now < be_end:
+        be_start = now
+
+    observer = Observer(latitude=lat, longitude=lon)
+
+    print(f"drop_off_angle: {drop_off_angle}")
+
+    solar_dropoff = sun.time_at_elevation(observer, drop_off_angle, date=now.date(), direction=SunDirection.SETTING, tzinfo=LOCAL_TZ)
+
+    print(f"solar_dropoff: {solar_dropoff.time()}")
+
+    if solar_dropoff < be_start:
+        SCHEDULED_TIMES.extend([datetime.combine(today, time(12, 30), tzinfo=LOCAL_TZ)])
+    else:
+        SCHEDULED_TIMES.extend([datetime.combine(today, time(18, 0), tzinfo=LOCAL_TZ)])
+
+    SCHEDULED_TIMES.sort()
 
     BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
 

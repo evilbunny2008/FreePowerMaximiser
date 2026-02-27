@@ -859,6 +859,7 @@ if __name__ == "__main__":
     tz = configParser.get("Defaults", "timezone", fallback = "UTC")
     lat = configParser.getfloat("Defaults", "lat", fallback = 0.0)
     lon = configParser.getfloat("Defaults", "lon", fallback = 0.0)
+    start_angle = configParser.getfloat("Defaults", "start_angle", fallback = 22.5)
     drop_off_angle = configParser.getfloat("Defaults", "drop_off_angle", fallback = 22.5)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
@@ -947,9 +948,13 @@ if __name__ == "__main__":
 
     observer = Observer(latitude=lat, longitude=lon)
 
+    solar_start = sun.time_at_elevation(observer, start_angle, date=now.date(), direction=SunDirection.RISING, tzinfo=LOCAL_TZ)
     solar_dropoff = sun.time_at_elevation(observer, drop_off_angle, date=now.date(), direction=SunDirection.SETTING, tzinfo=LOCAL_TZ)
 
     if DEBUG:
+        print(f"start_angle: {start_angle}")
+        print(f"solar_start: {solar_start.time()}")
+
         print(f"drop_off_angle: {drop_off_angle}")
         print(f"solar_dropoff: {solar_dropoff.time()}")
 

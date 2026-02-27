@@ -27,26 +27,107 @@ By:       Tony Matthews
 ##################################################################################################
 
 version = "2.9.4.1"
-#print(f"FoxESS-Cloud Open API version {version}")
+print(f"FoxESS-Cloud Open API version {version}")
 
-# constants
-month_names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-
-import os.path
-import json
-import time
-from datetime import datetime, timedelta, timezone
-from copy import deepcopy
-import requests
-from requests.auth import HTTPBasicAuth
 import hashlib
+import json
+import os.path
+import requests
+import time
+
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from requests.auth import HTTPBasicAuth
 
 fox_domain = "https://www.foxesscloud.com"
 api_key = None
 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 time_zone = 'Australia/Sydney'
 lang = 'en'
+
+# Initalise variables
+
+batteries = None
+battery = None
+battery_data = ['soc', 'volt', 'current', 'power', 'temperature', 'residual', 'soh', 'throughput']
+battery_info_app_key = "aug938dqt5cbqhvq69ixc4v39q6wtw"
+battery_settings = None
+battery_vars = ['SoC', 'invBatVolt', 'invBatCurrent', 'invBatPower', 'batTemperature', 'ResidualEnergy','SOH','energyThroughput' ]
+cells_per_battery = [16, 18, 15]
+device_list = None
+device = None
+device_sn = None
+energy_vars = ['output_daily', 'feedin_daily', 'load_daily', 'grid_daily', 'bat_charge_daily', 'bat_discharge_daily', 'pv_energy_daily', 'ct2_daily', 'input_daily']
+fix_values = 1
+fix_value_threshold = 200000000.0
+fix_value_mask = 0x0000FFFF
+logger_list = None
+logger = None
+logger_sn = None
+max_periods = 8
+messages = None
+name_list = ['ExportLimit','MinSoc','MinSocOnGrid','MaxSoc','GridCode','WorkMode','ExportLimitPower',
+    'EpsOutPut','MaxSetChargeCurrent','MaxSetDischargeCurrent','ECOMode','Meter1Enable','Meter2Enable','SysSwitch','GroundProtection']
+named_settings = {}
+power_vars = ['generationPower', 'feedinPower','loadsPower','gridConsumptionPower','batChargePower', 'batDischargePower', 'pvPower', 'meterPower2']
+report_vars = ['generation', 'feedin', 'loads', 'gridConsumption', 'chargeEnergyToTal', 'dischargeEnergyToTal', 'PVEnergyTotal']
+report_names = ['Generation', 'Grid Export', 'Consumption', 'Grid Import', 'Battery Charge', 'Battery Discharge', 'PV Yield']
+residual_handling = 0
+residual_scale = 1
+sample_time = 5.0
+sample_rounding = 2
+schedule = None
+site_list = None
+site = None
+station_id = None
+temp_slots_per_battery = 8
+var_table = None
+var_list = None
+work_mode = None
+work_modes = ['SelfUse', 'Feedin', 'Backup', 'ForceCharge', 'ForceDischarge']
+
+settable_modes = work_modes[:3]
+
+# charge rates based on residual_handling. Index is bms temperature
+
+battery_params = {
+#    bms temp      5 10  15  20  25  30  35  40  45  50  55  60 65
+#    cell temp    -5  0   5  10  15  20  25  30  35  40  45  50 55
+    1: {'table': [ 0, 2, 10, 15, 25, 50, 50, 50, 50, 50, 30, 20, 0],
+        'step': 5,
+        'offset': 5,
+        'charge_loss': 0.974,
+        'discharge_loss': 0.974},
+# HV BMS v2 with firmware 1.014 or later
+#    bms temp     10 15  20  25  30  35  40  45  50  55  60  65  70
+#    cell temp     0  5  10  15  20  25  30  35  40  45  50  55  60
+    2: {'table': [ 0, 5, 10, 15, 25, 50, 50, 50, 50, 25, 20,  3,  0],
+        'step': 5,
+        'offset': 11,
+        'charge_loss': 1.08,
+        'discharge_loss': 0.95},
+# Mira BMS with firmware 1.014 or later
+#    bms temp     10 15  20  25  30  35  40  45  50  55  60  65  70
+#    cell temp     0  5  10  15  20  25  30  35  40  45  50  55  60
+    3: {'table': [ 0, 5, 10, 15, 25, 50, 50, 50, 50, 25, 20,  3,  0],
+        'step': 5,
+        'offset': 11,
+        'charge_loss': 0.974,
+        'discharge_loss': 0.974},
+}
+
+# build request header with signing and throttling for queries
+
+http_timeout = 55       # http request timeout in seconds
+http_tries = 2          # number of times to re-try requst
+last_call = {}          # timestamp of the last call for a given path
+query_delay = 1         # minimum time between calls in seconds
+response_time = {}      # response time in seconds of the last call for a given path
+
+# implement minimum time between updates for inverter remote settings
+
+update_delay = 2       # delay between inverter setting updates in seconds
+update_time = {}       # last inverter setting update time
 
 ##################################################################################################
 ##################################################################################################
@@ -116,14 +197,6 @@ def avg(x):
         return None
     return sum(x) / len(x)
 
-# build request header with signing and throttling for queries
-
-last_call = {}          # timestamp of the last call for a given path
-response_time = {}      # response time in seconds of the last call for a given path
-query_delay = 1         # minimum time between calls in seconds
-http_timeout = 55       # http request timeout in seconds
-http_tries = 2          # number of times to re-try requst
-
 class MockResponse:
     def __init__(self, status_code, reason):
         self.status_code = status_code
@@ -190,11 +263,6 @@ def signed_post(path, body = None, login = 0):
             continue
     return MockResponse(999, message)
 
-# implement minimum time between updates for inverter remote settings
-
-update_delay = 2       # delay between inverter setting updates in seconds
-update_time = {}       # last inverter setting update time
-
 def setting_delay():
     global update_delay, update_time, device_sn
     sn = device_sn if device_sn is not None else ''
@@ -211,8 +279,6 @@ def setting_delay():
 ##################################################################################################
 # get error messages / error handling
 ##################################################################################################
-
-messages = None
 
 def get_messages():
     global debug_setting, messages, user_agent
@@ -265,9 +331,6 @@ def get_access_count():
 # get list of variables
 ##################################################################################################
 
-var_table = None
-var_list = None
-
 def get_vars():
     global var_table, var_list, debug_setting, messages, lang
     if api_key is None:
@@ -296,10 +359,6 @@ def get_vars():
 ##################################################################################################
 # get list of sites
 ##################################################################################################
-
-site_list = None
-site = None
-station_id = None
 
 def get_site(name=None):
     global site_list, site, debug_setting, station_id
@@ -356,10 +415,6 @@ def get_site(name=None):
 ##################################################################################################
 # get list of data loggers
 ##################################################################################################
-
-logger_list = None
-logger = None
-logger_sn = None
 
 def get_logger(sn=None):
     global logger_list, logger, logger_sn, debug_setting
@@ -426,10 +481,6 @@ def get_signal(sn=None):
 # get list of devices and select one, using the serial number if there is more than 1
 ##################################################################################################
 
-device_list = None
-device = None
-device_sn = None
-
 def get_device(sn=None, device_type=None):
     global device_list, device, device_sn, battery, debug_setting, schedule, remote_settings
     if get_vars() is None:
@@ -489,7 +540,7 @@ def get_device(sn=None, device_type=None):
     schedule = None
     get_flag()
     get_generation()
-#    remote_settings = get_ui()
+    # remote_settings = get_ui()
     # parse the model code to work out attributes
     model_code = device['deviceType'].upper() if device_type is None else device_type
     if model_code[0] in 'FGRST':
@@ -558,42 +609,6 @@ def get_generation(update=1):
 ##################################################################################################
 # get battery info and save to battery
 ##################################################################################################
-
-battery = None
-batteries = None
-battery_settings = None
-battery_vars = ['SoC', 'invBatVolt', 'invBatCurrent', 'invBatPower', 'batTemperature', 'ResidualEnergy','SOH','energyThroughput' ]
-battery_data = ['soc', 'volt', 'current', 'power', 'temperature', 'residual', 'soh', 'throughput']
-
-# 1 = Residual Energy, 2 = Residual Capacity (HV), 3 = Residual Capacity per battery (Mira)
-residual_handling = 0
-
-# charge rates based on residual_handling. Index is bms temperature
-battery_params = {
-#    bms temp      5 10  15  20  25  30  35  40  45  50  55  60 65 
-#    cell temp    -5  0   5  10  15  20  25  30  35  40  45  50 55
-    1: {'table': [ 0, 2, 10, 15, 25, 50, 50, 50, 50, 50, 30, 20, 0],
-        'step': 5,
-        'offset': 5,
-        'charge_loss': 0.974,
-        'discharge_loss': 0.974},
-# HV BMS v2 with firmware 1.014 or later
-#    bms temp     10 15  20  25  30  35  40  45  50  55  60  65  70 
-#    cell temp     0  5  10  15  20  25  30  35  40  45  50  55  60
-    2: {'table': [ 0, 5, 10, 15, 25, 50, 50, 50, 50, 25, 20,  3,  0],
-        'step': 5,
-        'offset': 11,
-        'charge_loss': 1.08,
-        'discharge_loss': 0.95},
-# Mira BMS with firmware 1.014 or later
-#    bms temp     10 15  20  25  30  35  40  45  50  55  60  65  70 
-#    cell temp     0  5  10  15  20  25  30  35  40  45  50  55  60
-    3: {'table': [ 0, 5, 10, 15, 25, 50, 50, 50, 50, 25, 20,  3,  0],
-        'step': 5,
-        'offset': 11,
-        'charge_loss': 0.974,
-        'discharge_loss': 0.974},
-}
 
 def get_battery(info=0, v=None, rated=None, count=None):
     global device_sn, battery, debug_setting, residual_handling, battery_params
@@ -863,7 +878,7 @@ def set_charge(ch1=True, st1=0, en1=0, ch2=True, st2=0, en2=0, force = 0, enable
             output(f"** set_charge(), {errno_message(response)}")
         return None
     else:
-        output(f"success", 2) 
+        output(f"success", 2)
     return battery_settings
 
 ##################################################################################################
@@ -946,40 +961,8 @@ def get_settings():
     return battery_settings
 
 ##################################################################################################
-# get peak shaving settings
-##################################################################################################
-
-def get_peakshaving():
-    global device_sn, debug_setting
-    if get_device() is None:
-        return None
-    output(f"getting peak shaving", 2)
-    body = {'sn': device_sn}
-    response = signed_post(path="/op/v0/device/peakShaving/get", body=body)
-    if response.status_code != 200:
-        output(f"** get_peakshaving() got response code {response.status_code}: {response.reason}")
-        return None
-    errno = response.json().get('errno')
-    if errno != 0:
-        if errno == 40257:
-            output(f"** Peak Shaving is not available")
-        else:
-            output(f"** get_peakshaving(), {errno_message(response)}")
-        return None
-    result = response.json().get('result')
-    if result is None:
-        output(f"** get_peakshaving(), no result data, {errno_message(response)}")
-        return None
-    return result
-
-##################################################################################################
 # get remote settings
 ##################################################################################################
-
-# store for named settings info
-name_list = ['ExportLimit','MinSoc','MinSocOnGrid','MaxSoc','GridCode','WorkMode','ExportLimitPower',
-    'EpsOutPut','MaxSetChargeCurrent','MaxSetDischargeCurrent','ECOMode','Meter1Enable','Meter2Enable','SysSwitch','GroundProtection']
-named_settings = {}
 
 def get_remote_settings(name):
     global device_sn, debug_setting, messages, name_data, named_settings
@@ -1053,8 +1036,6 @@ def set_named_settings(name, value, force=0):
 # wrappers for named settings
 ##################################################################################################
 
-work_mode = None
-
 def get_work_mode():
     global work_mode
     if get_device() is None:
@@ -1069,8 +1050,6 @@ def get_cell_volts():
     if values is None:
         return None
     return [v for v in values if v > 0]
-
-temp_slots_per_battery = 8
 
 def get_cell_temps(nbat=8):
     global temp_slots_per_battery
@@ -1096,9 +1075,6 @@ def get_cell_temps(nbat=8):
 ##################################################################################################
 # set work mode
 ##################################################################################################
-
-work_modes = ['SelfUse', 'Feedin', 'Backup', 'ForceCharge', 'ForceDischarge']
-settable_modes = work_modes[:3]
 
 def set_work_mode(mode, force = 0):
     global device_sn, work_modes, work_mode, debug_setting
@@ -1133,9 +1109,6 @@ def set_work_mode(mode, force = 0):
 ##################################################################################################
 # get flag
 ##################################################################################################
-
-schedule = None
-max_periods = 8
 
 # get the current switch status
 def get_flag():
@@ -1195,89 +1168,9 @@ def get_schedule():
                 schedule['maxsoc'] = True
     return schedule
 
-# build strategy using current schedule
-def build_strategy_from_schedule():
-    schedule = get_schedule()
-    if schedule.get('periods') is None:
-        return None
-    strategy = []
-    for p in schedule['periods']:
-        period = {}
-        period['start'] = round_time(p['startHour'] + p['startMinute'] / 60)
-        period['end'] = round_time(p['endHour'] + (p['endMinute'] + 1) / 60)
-        period['mode'] = p.get('workMode')
-        period['min_soc'] = p.get('minSocOnGrid')
-        period['max_soc'] = p.get('maxSoc')
-        period['fdsoc'] = p.get('fdsoc')
-        period['fdpwr'] = p.get('fdpwr')
-        period['import_limit'] = p.get('importLimit')
-        period['export_limit'] = p.get('exportLimit')
-        strategy.append(period)
-    return strategy
-
 ##################################################################################################
 # set schedule
 ##################################################################################################
-
-# create time segment structure. Note: end time is exclusive.
-def set_period(start=None, end=None, mode=None, min_soc=None, max_soc=None, fdsoc=None, fdpwr=None, import_limit=None, export_limit=None, price=None, segment=None, enable=1, quiet=1):
-    global schedule, device
-    if schedule is None or schedule.get('maxsoc') is None:
-        get_schedule()
-    if segment is not None and type(segment) is dict:
-        start = segment.get('start')
-        end = segment.get('end')
-        mode = segment.get('mode')
-        min_soc = segment.get('min_soc')
-        max_soc = segment.get('max_soc')
-        fdsoc = segment.get('fdSoc')
-        fdpwr = segment.get('fdPwr')
-        import_limit = segment.get('import_limit')
-        export_limit = segment.get('export_limit')
-        price = segment.get('price')
-    start = time_hours(start)
-    # adjust exclusive time to inclusive
-    end = time_hours(end)
-    if start is None or end is None or start >= end:
-        output(f"set_period(): ** invalid period times: {hours_time(start)}-{hours_time(end)}")
-        return None
-    end = round_time(end - 1/60)
-    mode = 'SelfUse' if mode is None else mode
-    if mode not in work_modes:
-        output(f"** mode must be one of {work_modes}")
-        return None
-    min_soc = 10 if min_soc is None else min_soc
-    max_soc = None if schedule is None or schedule.get('maxsoc') is None or schedule['maxsoc'] == False else 100 if max_soc is None else max_soc
-    if 'ForceCharge' in mode and fdsoc is None:
-        fdsoc = max_soc if max_soc is not None else 100
-    fdsoc = min_soc if fdsoc is None else fdsoc
-    power = (device['power'] * 1000) if device.get('power') is not None else None
-    fdpwr = power if fdpwr is None and device.get('power') is not None and ('ForceCharge' in mode or 'ForceDischarge' in mode) else fdpwr
-    fdpwr = 0 if fdpwr is None else fdpwr
-    if min_soc < 0 or min_soc > 100:
-        output(f"set_period(): ** min_soc must be between 0 and 100")
-        return None
-    if max_soc is not None and (max_soc < 10 or max_soc > 100):
-        output(f"set_period(): ** max_soc must be between 10 and 100")
-        return None
-    if fdpwr < 0 or fdpwr > 30000:
-        output(f"set_period(): ** fdpwr must be between 0 and 30000")
-        return None
-    if fdsoc < min_soc or fdsoc > 100:
-        output(f"set_period(): ** fdsoc must between {min_soc} and 100")
-        return None
-    if quiet == 0:
-        s = f"   {hours_time(start)}-{hours_time(end)} {mode}, minsoc {min_soc}%"
-        s += f", maxsoc {max_soc}%" if max_soc is not None and 'ForceCharge' in mode else ""
-        s += f", fdPwr {fdpwr}W, fdSoC {fdsoc}%" if ('ForceCharge' in mode or 'ForceDischarge' in mode) else ""
-        s += f", {price:.2f}p/kWh" if price is not None else ""
-        output(s, 1)
-    start_hour, start_minute = split_hours(start)
-    end_hour, end_minute = split_hours(end)
-    period = {'enable': enable, 'startHour': start_hour, 'startMinute': start_minute, 'endHour': end_hour, 'endMinute': end_minute, 'workMode': mode,
-        'extraParam': {'minSocOnGrid': int(min_soc), 'fdSoc': int(fdsoc), 'fdPwr': int(fdpwr), 'maxSoc': max_soc, 'importLimit': import_limit,
-        'exportLimit': export_limit }}
-    return period
 
 # set a schedule from a period or list of time segment periods
 def set_schedule(periods=None, enable=True):
@@ -1326,13 +1219,9 @@ def set_schedule(periods=None, enable=True):
     schedule['enable'] = enable
     return schedule
 
-
 ##################################################################################################
 # get real time data
 ##################################################################################################
-
-# residual scaling can be erratic, adjust if needed
-residual_scale = 0.01
 
 # get real time data
 def get_real(v = None, sns = None, version = 0):
@@ -1370,9 +1259,8 @@ def get_real(v = None, sns = None, version = 0):
             elif var.get('unit') is None:
                 var['unit'] = ''
     if version == 0 and type(sns) is not list:
-        result = result[0]['datas'] 
+        result = result[0]['datas']
     return result
-
 
 ##################################################################################################
 # get history data values
@@ -1384,17 +1272,8 @@ def get_real(v = None, sns = None, version = 0):
 # summary = 0: raw data, 1: add max, min, sum, 2: summarise and drop raw data, 3: calculate state
 # save = "xxxxx": save the raw results to xxxxx_history_<time_span>_<d>.json
 # load = "<file>": load the raw results from <file>
-# plot = 0: no plot, 1: plot variables separately, 2: combine variables 
+# plot = 0: no plot, 1: plot variables separately, 2: combine variables
 ##################################################################################################
-
-# variables that cover inverter power data: generationPower must be first
-power_vars = ['generationPower', 'feedinPower','loadsPower','gridConsumptionPower','batChargePower', 'batDischargePower', 'pvPower', 'meterPower2']
-#  names after integration of power to energy. List must be in the same order as above. input_daily must be last
-energy_vars = ['output_daily', 'feedin_daily', 'load_daily', 'grid_daily', 'bat_charge_daily', 'bat_discharge_daily', 'pv_energy_daily', 'ct2_daily', 'input_daily']
-
-# sample rate setting and rounding in intervals per minute
-sample_time = 5.0       # 5 minutes default
-sample_rounding = 2     # round to 30 seconds
 
 def get_history(time_span='hour', d=None, v=None, summary=1, save=None, load=None, plot=0):
     global device_sn, debug_setting, var_list, invert_ct2, tariff, max_power_kw, sample_rounding, sample_time, residual_scale, storage
@@ -1617,14 +1496,6 @@ def rescale_history(data, steps):
 # plot = 0: no plot, 1 = plot variables separately, 2 = combine variables
 ##################################################################################################
 
-report_vars = ['generation', 'feedin', 'loads', 'gridConsumption', 'chargeEnergyToTal', 'dischargeEnergyToTal', 'PVEnergyTotal']
-report_names = ['Generation', 'Grid Export', 'Consumption', 'Grid Import', 'Battery Charge', 'Battery Discharge', 'PV Yield']
-
-# fix power values after corruption of high word of 32-bit energy total
-fix_values = 1
-fix_value_threshold = 200000000.0
-fix_value_mask = 0x0000FFFF
-
 def get_report(dimension='day', d=None, v=None, summary=1, save=None, load=None, plot=0):
     global device_sn, var_list, debug_setting, report_vars, storage
     if get_device() is None:
@@ -1779,7 +1650,6 @@ def get_report(dimension='day', d=None, v=None, summary=1, save=None, load=None,
         plot_report(result, plot)
     return result
 
-
 ##################################################################################################
 ##################################################################################################
 # Operations section
@@ -1791,9 +1661,6 @@ def get_report(dimension='day', d=None, v=None, summary=1, save=None, load=None,
 ##################################################################################################
 # times are held either as text HH:MM or HH:MM:SS or as decimal hours e.g. 01.:30 = 1.5
 # decimal hours allows maths operations to be performed simply
-
-# time shift from UTC (before any DST adjustment)
-time_shift = 0
 
 # roll over decimal times after maths and round to 1 minute
 def round_time(h):
@@ -1937,7 +1804,6 @@ def period_hours(period, check = None, value = 1):
 def format_period(period):
     return f"{hours_time(period['start'])}-{hours_time(period['end'])}"
 
-
 ##################################################################################################
 # Battery Info / Battery Monitor
 ##################################################################################################
@@ -1962,8 +1828,6 @@ def imbalance(v):
     min_v = min(v)
     return (max_v - min_v) / (max_v + min_v) * 200
 
-cells_per_battery = [16,18,15]      # allowed number of cells per battery
-
 # deduce the number of batteries from the number of cells
 def bat_count(cell_count):
     global cells_per_battery
@@ -1975,9 +1839,6 @@ def bat_count(cell_count):
     if n is None:
         return None
     return int(cell_count / n + 0.5)
-
-# battery monitor app key
-battery_info_app_key = "aug938dqt5cbqhvq69ixc4v39q6wtw"
 
 # show information about the current state of the batteries
 def battery_info(log=0, plot=1, rated=None, count=None, info=1, bat=None):
@@ -2109,7 +1970,6 @@ def battery_monitor(interval=30, run=48, log=1, count=None, save=None, overwrite
         time.sleep(interval * 60 - t2 + t1)
     return
 
-
 ##################################################################################################
 # Date Ranges
 ##################################################################################################
@@ -2183,8 +2043,6 @@ def date_list(s = None, e = None, limit = None, span = None, today = 0, quiet = 
         d += timedelta(days=step)
         l.append(datetime.strftime(d, '%Y-%m-%d'))
     return l
-
-
 
 # add to spooled_output
 def output(s="", log_level=None):

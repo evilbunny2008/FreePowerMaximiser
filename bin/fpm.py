@@ -318,28 +318,28 @@ def compare_period(old_period, new_period):
     changes = []
 
     # Top-level comparisons
-    if old_period.get('workMode') != new_period.get('workMode'):
+    if old_period.get("workMode") != new_period.get("workMode"):
         changes.append(f"Work mode: {old_period['workMode']} → {new_period['workMode']}")
 
-    if old_period.get('enable') != new_period.get('enable'):
+    if old_period.get("enable") != new_period.get("enable"):
         changes.append(f"Enabled: {old_period['enable']} → {new_period['enable']}")
 
     # Time comparisons
-    if (old_period.get('startHour') != new_period.get('startHour') or
-        old_period.get('startMinute') != new_period.get('startMinute')):
+    if (old_period.get("startHour") != new_period.get("startHour") or
+        old_period.get("startMinute") != new_period.get("startMinute")):
         changes.append(f"Start time: {old_period['startHour']}:{old_period['startMinute']:02d} → "
                       f"{new_period['startHour']}:{new_period['startMinute']:02d}")
 
-    if (old_period.get('endHour') != new_period.get('endHour') or
-        old_period.get('endMinute') != new_period.get('endMinute')):
+    if (old_period.get("endHour") != new_period.get("endHour") or
+        old_period.get("endMinute") != new_period.get("endMinute")):
         changes.append(f"End time: {old_period['endHour']}:{old_period['endMinute']:02d} → "
                       f"{new_period['endHour']}:{new_period['endMinute']:02d}")
 
     # ExtraParam comparisons
-    old_extra = old_period.get('extraParam', {})
-    new_extra = new_period.get('extraParam', {})
+    old_extra = old_period.get("extraParam", {})
+    new_extra = new_period.get("extraParam", {})
 
-    for param in ['minSocOnGrid', 'maxSoc', 'fdSoc', 'fdPwr', 'exportLimit', 'importLimit', 'pvLimit', 'reactivePower']:
+    for param in ["minSocOnGrid", "maxSoc", "fdSoc", "fdPwr", "exportLimit", "importLimit", "pvLimit", "reactivePower"]:
         if old_extra.get(param) != new_extra.get(param):
             changes.append(f"{param}: {old_extra.get(param)} → {new_extra.get(param)}")
 
@@ -348,13 +348,17 @@ def compare_period(old_period, new_period):
 def check_periods(old_periods, new_periods):
     """ Check for difference between the existing periods and the new periods """
 
+    all_changes = {}
     for i, (old, new) in enumerate(zip(old_periods, new_periods)):
         changes = compare_period(old, new)
 
         if changes:
-            print("Changes found between current and new period")
-            pprint(changes)
-            return True
+            all_changes[i] = changes
+
+    if all_changes:
+        print("Changes found between current and new period")
+        pprint(changes)
+        return True
 
     return False
 
@@ -511,8 +515,8 @@ def main():
 
     openapi.residual_handling = 0
     batt = openapi.get_battery()
-    max_kWhr = batt['capacity']
-    curr_kWhr = batt['residual']
+    max_kWhr = batt["capacity"]
+    curr_kWhr = batt["residual"]
 
     target_kWhr = round(max_kWhr * battery_target_percent / 100, 2)
     discharge_target_kWhr = round(max_kWhr * battery_discharge_target_percent / 100, 2)
@@ -584,30 +588,27 @@ def main():
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
-
-            pprint(forecast1_dict)
-
-            rest_of_today_kWhr1 = round(forecast1_dict["with"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr1 = round(forecast1_dict["with"] / 1000, 2)
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
-            rest_of_today_kWhr2a = round(forecast2_dict["without"] * 0.8 / 1000, 2)
-            rest_of_today_kWhr2b = round(forecast2_dict["period"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr2a = round(forecast2_dict["without"] / 1000, 2)
+            rest_of_today_kWhr2b = round(forecast2_dict["period"] / 1000, 2)
 
-        rest_of_today_kWhr2 = round(forecast2_dict["with"] * 0.8 / 1000, 2)
+        rest_of_today_kWhr2 = round(forecast2_dict["with"] / 1000, 2)
 
         print(f"Solcast forecast for the rest of today: {round(rest_of_today_kWhr1 + rest_of_today_kWhr2, 2)}kWhrs")
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
-            rest_of_today_kWhr3 = round(forecast3_dict["with"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr3 = round(forecast3_dict["with"] * fsolar_degredation1 / 1000, 2)
 
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
-            rest_of_today_kWhr4a = round(forecast4_dict["without"] * 0.8 / 1000, 2)
-            rest_of_today_kWhr4b = round(forecast4_dict["period"] * 0.8 / 1000, 2)
+            rest_of_today_kWhr4a = round(forecast4_dict["without"] * fsolar_degredation2 / 1000, 2)
+            rest_of_today_kWhr4b = round(forecast4_dict["period"] * fsolar_degredation2 / 1000, 2)
 
-        rest_of_today_kWhr4 = round(forecast4_dict["with"] * 0.8 / 1000, 2)
+        rest_of_today_kWhr4 = round(forecast4_dict["with"] * fsolar_degredation2 / 1000, 2)
 
         print(f"forecast.solar forecast for the rest of today: {round(rest_of_today_kWhr3 + rest_of_today_kWhr4, 2)}kWhrs")
 
@@ -617,7 +618,7 @@ def main():
     if now.hour >= be_start_hour:
         end_hour = 24
 
-    time_period_in_hours1 = (end_hour - now.hour) - (now.minute / 60) - (now.second / 3600)
+    time_period_in_hours1 = end_hour - now.hour - (now.minute / 60) - (now.second / 3600)
 
     print(f"time_period_in_hours1: {round(time_period_in_hours1, 2)} hrs (counting {fp_start_hour}am to {(fp_end_hour - 12)}pm) until {(end_hour - 12)}pm")
 
@@ -665,7 +666,7 @@ def main():
         if est_kWhrs2 < 0:
             print(f"A negative result below indicates there will be more consumption than generation")
 
-        print(f"Forecast.solar max_kWhrs2 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(est_kWhrs2, 2)}kWhrs")
+        print(f"Forecast.solar est_kWhrs2 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {round(est_kWhrs2, 2)}kWhrs")
 
         left_in_battery_kWhrs1 = curr_kWhr + est_kWhrs1
 
@@ -675,11 +676,11 @@ def main():
 
         print(f"Forecast.solar predicts left_in_battery_kWhrs2 at {(be_start_hour - 12)}pm: {round(left_in_battery_kWhrs2, 2)}kWhrs")
 
-        new_batt_percent1 = round(left_in_battery_kWhrs1 / est_kWhrs1 * 100.0, 1)
+        new_batt_percent1 = round(left_in_battery_kWhrs1 / max_kWhr * 100.0, 1)
 
         print(f"Solcast predicts the Battery capacity at {(be_start_hour - 12)}pm: {round(new_batt_percent1, 1)}%")
 
-        new_batt_percent2 = round(left_in_battery_kWhrs2 / est_kWhrs2 * 100.0, 1)
+        new_batt_percent2 = round(left_in_battery_kWhrs2 / max_kWhr * 100.0, 1)
 
         print(f"Forecast.solar predicts the battery capacity at {(be_start_hour - 12)}pm: {new_batt_percent2}%")
 
@@ -746,18 +747,22 @@ def main():
 
         print(f"max_kWhrs3 needed from {(curr_start_hour - 12)}pm to {(be_end_hour - 12)}pm: {max_kWhrs3}kWhrs")
 
-        excess_kWhrs3 = curr_kWhr - discharge_target_kWhr - max_kWhrs1 - max_kWhrs3
+        max_kWhrs = max_kWhrs1 + max_kWhrs3
 
-        print(f"excess_kWhrs3: {round(excess_kWhrs3, 2)}kWhrs")
+        print(f"max_kWhrs needed to {(be_end_hour - 12)}pm: {max_kWhrs}kWhrs")
 
-        if now.hour < be_end_hour and excess_kWhrs3 > min_grid_export_kWhr:
+        excess_kWhrs = curr_kWhr + rest_of_today_kWhr1 + rest_of_today_kWhr2b - discharge_target_kWhr - max_kWhrs
+
+        print(f"excess_kWhrs to {(be_end_hour - 12)}pm: {round(excess_kWhrs, 2)}kWhrs")
+
+        if now.hour < be_end_hour and excess_kWhrs > min_grid_export_kWhr:
 
             if be_start_hour <= now.hour < be_end_hour:
                 max_seconds = (be_end_hour - curr_start_hour - curr_start_min / 60 - curr_start_sec / 3600) * 3600
             else:
                 max_seconds = (be_end_hour - be_start_hour) * 3600
 
-            time_needed = excess_kWhrs3 / be_max_rate_kW * 3600
+            time_needed = excess_kWhrs / be_max_rate_kW * 3600
 
             if time_needed < 0:
                 time_needed = 0
@@ -773,8 +778,8 @@ def main():
 
         print()
 
+    time_needed = 0
     new_periods = generate_periods(now, charge_rate_watts, time_needed)
-    #pprint(new_periods)
 
     curr_periods = openapi.get_schedule()["periods"]
     if check_periods(curr_periods, new_periods):
@@ -827,6 +832,8 @@ if __name__ == "__main__":
     solcast_siteid1 = configParser.get("Solcast", "siteid1", fallback = None)
     solcast_siteid2 = configParser.get("Solcast", "siteid2", fallback = None)
 
+    fsolar_degredation1 = (100 - configParser.getfloat("Forecast.Solar", "degredation1", fallback = 20)) / 100
+    fsolar_degredation2 = (100 - configParser.getfloat("Forecast.Solar", "degredation2", fallback = 20)) / 100
     fsolar_tilt1 = configParser.getfloat("Forecast.Solar", "tilt1", fallback = None)
     fsolar_tilt2 = configParser.getfloat("Forecast.Solar", "tilt2", fallback = None)
     fsolar_az1 = configParser.getfloat("Forecast.Solar", "az1", fallback = None)
@@ -910,8 +917,6 @@ if __name__ == "__main__":
 
     openapi.api_key = foxess_apikey
     openapi.time_zone = tz
-
-    openapi.residual_scale = 1
 
     if DEBUG:
         openapi.debug_setting = 1

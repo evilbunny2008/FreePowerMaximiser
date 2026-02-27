@@ -778,7 +778,6 @@ def main():
 
         print()
 
-    time_needed = 0
     new_periods = generate_periods(now, charge_rate_watts, time_needed)
 
     curr_periods = openapi.get_schedule()["periods"]

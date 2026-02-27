@@ -67,14 +67,15 @@ def perform_download(url, filename):
 
     response = requests.get(url, timeout=30)
 
-    print(response.url)
-
     statcode = response.status_code
     if statcode != 200:
         print(f"Failed to download: {url}, status_code: {statcode}, reason: {response.reason}...")
         return False
 
     response.raise_for_status()
+
+    if DEBUG:
+        print(f"Successfully downloaded from: {response.url}")
 
     with open(filename, "w") as f:
         f.write(response.text)
@@ -809,7 +810,9 @@ def main():
 
     curr_periods = openapi.get_schedule()["periods"]
     if check_periods(curr_periods, new_periods):
-        pprint(openapi.set_schedule(new_periods))
+        print("Successfully uploaded new periods...")
+        if DEBUG:
+            pprint(openapi.set_schedule(new_periods))
     else:
         print("The new periods match the old periods... skipping uploading new periods...")
 

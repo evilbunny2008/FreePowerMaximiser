@@ -27,7 +27,7 @@ By:       Tony Matthews
 ##################################################################################################
 
 version = "2.9.4.1"
-print(f"FoxESS-Cloud Open API version {version}")
+#print(f"FoxESS-Cloud Open API version {version}")
 
 import hashlib
 import json
@@ -483,30 +483,38 @@ def get_signal(sn=None):
 
 def get_device(sn=None, device_type=None):
     global device_list, device, device_sn, battery, debug_setting, schedule, remote_settings
+
     if get_vars() is None:
         return None
+
     if device is not None:
         if sn is None:
             return device
+
         if device_sn[:len(sn)].upper() == sn.upper():
             return device
+
     output(f"getting device", 2)
     if sn is None and device_sn is not None and len(device_sn) == 15:
         sn = device_sn
+
     # get device list
     body = {'pageSize': 100, 'currentPage': 1}
     response = signed_post(path="/op/v0/device/list", body=body)
     if response.status_code != 200:
         output(f"** get_device() list got response code {response.status_code}: {response.reason}")
         return None
+
     result = response.json().get('result')
     if result is None:
         output(f"** get_device(), no list result data, {errno_message(response)}")
         return None
+
     total = result.get('total')
     if total is None or total == 0 or total > 100:
         output(f"** invalid list of devices returned: {total}")
         return None
+
     device_list = result.get('data')
     # look for the device we want in the list
     n = None
@@ -517,11 +525,13 @@ def get_device(sn=None, device_type=None):
             if device_list[i]['deviceSN'][:len(sn)].upper() == sn.upper():
                 n = i
                 break
+
         if n is None:
             output(f"\nget_device(): please provide a serial number from this list:")
             for d in device_list:
                 output(f"SN={d['deviceSN']}, Type={d['deviceType']}")
             return None
+
     # load information for the device
     device_sn = device_list[n].get('deviceSN')
     params = {'sn': device_sn }
@@ -529,10 +539,12 @@ def get_device(sn=None, device_type=None):
     if response.status_code != 200:
         output(f"** get_device() got detail response code {response.status_code}: {response.reason}")
         return None
+
     result = response.json().get('result')
     if result is None:
         output(f"** get_device(), no detail result data, {errno_message(response)}")
         return None
+
     device = result
     battery = None
     batteries = None
@@ -552,12 +564,14 @@ def get_device(sn=None, device_type=None):
         model_code = 'AIO' + model_code[4:]
     elif model_code[:3] == 'EVO':
         model_code = 'EVO-' + model_code[4:]
+
     parts = model_code.split('-')
     model = parts[0]
     device['eps'] = ('E' in parts[-1]) or (model == 'EVO' and 'H' in parts[-1])
     if model not in ['F1', 'G1', 'R3', 'S1', 'T3', 'KH', 'H1', 'AC1', 'H3', 'AC3', 'AIOH1', 'AIOH3', 'EVO']:
         output(f"** device model not recognised for deviceType: {device['deviceType']}")
         return device
+
     device['model'] = model
     device['phase'] = 3 if model[-1:] == '3' else 1
     for p in parts[1:]:
@@ -566,8 +580,10 @@ def get_device(sn=None, device_type=None):
             if power >= 0.5 and power < 100.0:
                 device['power'] = power
             break
+
     if device.get('power') is None:
         output(f"** device power not found for deviceType: {device['deviceType']}")
+
     # set max charge current
     if model in ['F1', 'G1', 'R3', 'S1', 'T3']:
         device['max_charge_current'] = None
@@ -579,6 +595,7 @@ def get_device(sn=None, device_type=None):
         device['max_charge_current'] = 26
     else:
         device['max_charge_current'] = 40
+
     return device
 
 ##################################################################################################

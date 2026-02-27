@@ -15,10 +15,11 @@ import requests
 import sys
 
 from datetime import date, datetime, time
+from itertools import zip_longest
 from pprint import pprint
 from zoneinfo import ZoneInfo
 
-# Enable debugging here
+# Set the default debugging here unless set in the .conf file
 DEBUG = False
 
 # Cached file names
@@ -222,23 +223,32 @@ def generate_periods(now, in_watts, time_needed):
             curr_start_hour = now.hour
             curr_start_min = now.minute
 
-        print(f"curr_start_hour: {curr_start_hour}")
-        print(f"curr_start_min: {curr_start_min}")
+        if DEBUG:
+            print(f"curr_start_hour: {curr_start_hour}")
+            print(f"curr_start_min: {curr_start_min}")
 
-        end_time = be_end_hour * 3600
-        print(f"end_time: {end_time}s")
+        end_time = int(be_end_hour * 3600)
+
+        if DEBUG:
+            print(f"end_time: {end_time}s")
 
         now_time = int(curr_start_hour * 3600 + curr_start_min * 60 + 60)
-        print(f"now_time: {now_time}s")
 
-        max_time = end_time - now_time
-        print(f"max_time: {max_time}s")
+        if DEBUG:
+            print(f"now_time: {now_time}s")
+
+        max_time = int(end_time - now_time)
+
+        if DEBUG:
+            print(f"max_time: {max_time}s")
 
         if time_needed > max_time:
             time_needed = max_time
 
-        end_time = now_time + time_needed
-        print(f"end_time: {end_time}s")
+        end_time = int(now_time + time_needed)
+
+        if DEBUG:
+            print(f"end_time: {end_time}s")
 
         end_hour, remainder = divmod(end_time, 3600)
         end_minute, end_second = divmod(remainder, 60)
@@ -246,8 +256,9 @@ def generate_periods(now, in_watts, time_needed):
         end_hour = int(end_hour)
         end_minute = int(end_minute)
 
-        print(f"end_hour: {end_hour}")
-        print(f"end_minute: {end_minute}")
+        if DEBUG:
+            print(f"end_hour: {end_hour}")
+            print(f"end_minute: {end_minute}")
 
         period3 = {"enable": 1,
               "startHour": (fp_end_hour - 1),
@@ -349,15 +360,28 @@ def check_periods(old_periods, new_periods):
     """ Check for difference between the existing periods and the new periods """
 
     all_changes = {}
-    for i, (old, new) in enumerate(zip(old_periods, new_periods)):
-        changes = compare_period(old, new)
+    for i, (old, new) in enumerate(zip_longest(old_periods, new_periods)):
 
+        if old is None and new is None:
+            continue
+
+        if new is None:
+            all_changes[i] = [f"New period missing: {old}"]
+            continue
+
+        if old is None:
+            all_changes[i] = [f"Old period missing: {new}"]
+            continue
+
+        changes = compare_period(old, new)
         if changes:
             all_changes[i] = changes
 
     if all_changes:
-        print("Changes found between current and new period")
-        pprint(changes)
+        if DEBUG:
+            print("Changes found between current and new period")
+            pprint(all_changes)
+
         return True
 
     return False
@@ -368,14 +392,16 @@ def get_json(now, url, filename):
 
     for schedule_time in SCHEDULED_TIMES:
         if schedule_time < now and should_download_now(schedule_time, filename):
-            print(f"schedule_time is less than now")
             if DEBUG:
+                print(f"schedule_time is less than now")
                 print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
 
             if perform_download(url, filename):
                 download_performed = True
+
                 if DEBUG:
                     print(f"  Download successful...")
+
             elif DEBUG:
                 print(f"  Will retry on next run...")
 
@@ -513,8 +539,8 @@ def main():
     now = datetime.now(LOCAL_TZ)
     #now = datetime(2026, 2, 26, 18, 0, 0, tzinfo=LOCAL_TZ)
 
-    openapi.residual_handling = 0
     batt = openapi.get_battery()
+
     max_kWhr = batt["capacity"]
     curr_kWhr = batt["residual"]
 
@@ -564,7 +590,7 @@ def main():
     if 10 <= now.hour < end_hour:
 
         # Fetch and save or load forecasts
-        if fsolar_url1 is not None and fsolar_url1.startswith("https://") or fsolar_url2 is not None and fsolar_url2.startswith("https://") and DEBUG:
+        if (fsolar_url1 is not None and fsolar_url1.startswith("https://") or fsolar_url2 is not None and fsolar_url2.startswith("https://")) and DEBUG:
             print()
             print("Fetching and/or loading forecast.solar forecasts...")
 
@@ -574,7 +600,7 @@ def main():
         if fsolar_url2 is not None and fsolar_url2.startswith("https://"):
             forecast4 = get_json(now, fsolar_url2, fsolar_filename2)
 
-        if solcast_url1 is not None and solcast_url1.startswith("https://") or solcast_url2 is not None and solcast_url2.startswith("https://") and DEBUG:
+        if (solcast_url1 is not None and solcast_url1.startswith("https://") or solcast_url2 is not None and solcast_url2.startswith("https://")) and DEBUG:
             print()
             print("Fetching and/or loading Solcast forecasts...")
 
@@ -584,7 +610,8 @@ def main():
         if solcast_url2 is not None and solcast_url2.startswith("https://"):
             forecast2 = get_json(now, solcast_url2, solcast_filename2)
 
-        print()
+        if DEBUG:
+            print()
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
@@ -637,13 +664,13 @@ def main():
 
     house_usage_kWhrs1 = round(house_usage * time_period_in_hours2, 2)
 
-    print(f"house_usage_kWhrs1 until 12am to {fp_start_hour}am and {(fp_end_hour - 12)}pm to {(be_start_hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
+    print(f"house_usage_kWhrs1 from midnight until {fp_start_hour}am and from {(fp_end_hour - 12)}pm until {(be_start_hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
 
     BOM_dict = get_BOM_hourly(now, start_hour, end_hour)
 
     approx_aircon_usage1 = round(BOM_dict["without"] * aircon_usage, 2)
 
-    print(f"approx_aircon_usage1 for 12am to {fp_start_hour}am and {(fp_end_hour - 12)}pm to {(be_start_hour - 12)}pm: {approx_aircon_usage1}kWhrs")
+    print(f"approx_aircon_usage1 from midnight until {fp_start_hour}am and from {(fp_end_hour - 12)}pm to {(be_start_hour - 12)}pm: {approx_aircon_usage1}kWhrs")
 
     max_kWhrs1 = round(approx_aircon_usage1 + house_usage_kWhrs1, 2)
 
@@ -774,11 +801,11 @@ def main():
 
         if time_needed > 0:
             earn = excess_kWhrs * be_fit
-            print(f"You could earn up to ${earn:.2f} by exporting between {(be_start_hour - 12)}pm and {(be_end_hour - 12)}pm")
+            print(f"You will earn up to ${earn:.2f} exporting between {(be_start_hour - 12)}pm and {(be_end_hour - 12)}pm")
 
         print()
 
-    new_periods = generate_periods(now, charge_rate_watts, time_needed)
+    new_periods = new_periods1 = generate_periods(now, charge_rate_watts, time_needed)
 
     curr_periods = openapi.get_schedule()["periods"]
     if check_periods(curr_periods, new_periods):
@@ -804,7 +831,7 @@ if __name__ == "__main__":
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
 
-    DEBUG = configParser.getboolean("Defaults", "debug", fallback = False)
+    DEBUG = configParser.getboolean("Defaults", "debug", fallback = DEBUG)
 
     battery_target_percent = sanitise_percent(configParser.getfloat("Defaults", "target_percent", fallback = 80), False)
     battery_discharge_target_percent = sanitise_percent(configParser.getfloat("Defaults", "discharge_target_percent", fallback = 80), False)

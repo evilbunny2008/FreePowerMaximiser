@@ -227,7 +227,11 @@ def generate_periods(now, in_watts, time_needed, be_start, be_end):
             print(f"be_start.hour: {be_start.hour}")
             print(f"be_start.minute: {be_start.minute}")
 
-        end_time = now + timedelta(seconds=time_needed)
+        start_time = be_start
+        if start_time < now:
+            start_time = now
+
+        end_time = start_time + timedelta(seconds=time_needed)
         if end_time > be_end:
             end_time = be_end
 
@@ -238,8 +242,8 @@ def generate_periods(now, in_watts, time_needed, be_start, be_end):
         period3 = {"enable": 1,
               "startHour": (fp_end_hour - 1),
               "startMinute": 58,
-              "endHour": be_start.hour,
-              "endMinute": be_start.minute,
+              "endHour": start_time.hour,
+              "endMinute": start_time.minute,
               "extraParam": {"exportLimit": 100000,
                              "fdPwr": fdPwr,
                              "fdSoc": battery_min_grid_percent,
@@ -251,8 +255,8 @@ def generate_periods(now, in_watts, time_needed, be_start, be_end):
               "workMode": "SelfUse"}
 
         period4 = {"enable": 1,
-              "startHour": be_start.hour,
-              "startMinute": be_start.minute,
+              "startHour": start_time.hour,
+              "startMinute": start_time.minute,
               "endHour": end_time.hour,
               "endMinute": end_time.minute,
               "extraParam": {"exportLimit": 100000,

@@ -1,9 +1,9 @@
 ##################################################################################################
 """
 
-------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------
 
-This is a minimised and heavily modified version of openapi.py for just the Fox ESS OpenAPI, and was forked from:
+This is a heavily modified version of openapi.py for just the Fox ESS OpenAPI calls, and was forked from:
 https://github.com/TonyM1958/FoxESS-Cloud/blob/e0626202cbf5cd41356bdba0c7e3c13ab4b501f8/src/foxesscloud/openapi.py
 
 What"s removed:
@@ -14,7 +14,7 @@ What"s removed:
 - forecast.solar code
 - Pushover code
 
-------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------
 
 Module:   Fox ESS Cloud using Open API
 Updated:  19 January 2025
@@ -187,15 +187,13 @@ def get_result(fn, response, error_code):
         raise FoxESSAPIError(response.status_code, fn + response.reason)
 
     result = response.json().get("result")
+
     errno = response.json().get("errno")
-    if result is None or len(result) <= 0:
-
-        if errno is None or errno <= 0:
-            errno = error_code
-
-        no_data_returned(fn, errno)
-
     if errno is not None and errno > 0:
+
+        if result is None or len(result) <= 0:
+            no_data_returned(fn, errno)
+
         if errno == 44096:
             raise FoxESSAPIError(errno, f"{fn}Cannot update settings when schedule is active.")
 
@@ -978,8 +976,6 @@ def set_min(minSocOnGrid = None, minSoc = None, force = 0):
     if battery_settings.get("minSoc") is not None:
         body["minSoc"] = battery_settings["minSoc"]
 
-    setting_delay()
-
     response = signed_post(path="/op/v0/device/battery/soc/set", body=body)
 
     result = get_result(fn, response, set_min_error_code + 60)
@@ -1030,8 +1026,6 @@ def get_remote_settings(name):
 
         return values
 
-    setting_delay()
-
     body = {"sn": device_sn, "key": name}
     response = signed_post(path="/op/v0/device/setting/get", body=body)
 
@@ -1078,8 +1072,6 @@ def set_named_settings(name, value, force=0):
 
         if result is None:
             return None
-
-    setting_delay()
 
     body = {"sn": device_sn, "key": name, "value": f"{value}"}
     response = signed_post(path="/op/v0/device/setting/set", body=body)
@@ -1176,8 +1168,6 @@ def set_work_mode(mode, force = 0):
             raise FoxESSAPIError(set_work_mode_error_code + 20, f"{fn}Cannot set work mode when a schedule is enabled")
 
         set_schedule(enable=0)
-
-    setting_delay()
 
     body = {"sn": device_sn, "key": "WorkMode", "value": mode}
     response = signed_post(path="/op/v0/device/setting/set", body=body)
@@ -1299,18 +1289,17 @@ def set_schedule(periods=None, enable=True):
         if len(periods) > max_periods:
             raise FoxESSAPIError(set_schedule_error_code + 30, f"{fn}Maximum of {max_periods} periods allowed, {len(periods)} provided")
 
-        setting_delay()
-
         body = {"deviceSN": device_sn, "groups": periods[-max_periods:]}
+
         response = signed_post(path="/op/v2/device/scheduler/enable", body=body)
 
-        result = get_result(fn, response,set_schedule_error_code  + 30)
+        result = get_result(fn, response, set_schedule_error_code + 30)
 
         schedule["periods"] = periods
 
-    setting_delay()
 
     body = {"deviceSN": device_sn, "enable": 1 if enable else 0}
+
     response = signed_post(path="/op/v1/device/scheduler/set/flag", body=body)
 
     result = get_result(fn, response, set_schedule_error_code + 40)

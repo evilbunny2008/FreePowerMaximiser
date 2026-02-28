@@ -36,7 +36,6 @@ import inspect
 import json
 import os.path
 import requests
-import time
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -127,11 +126,6 @@ http_tries = 2          # number of times to re-try requst
 last_call = {}          # timestamp of the last call for a given path
 query_delay = 1         # minimum time between calls in seconds
 response_time = {}      # response time in seconds of the last call for a given path
-
-# implement minimum time between updates for inverter remote settings
-
-update_delay = 2       # delay between inverter setting updates in seconds
-update_time = {}       # last inverter setting update time
 
 ##################################################################################################
 ##################################################################################################
@@ -301,27 +295,15 @@ def avg(x):
     return sum(x) / len(x)
 
 def signed_header(path, login = 0):
-    global api_key, user_agent, time_zone, lang, debug_setting, last_call, query_delay
 
     headers = {}
     token = api_key if login == 0 else ""
-    t_now = time.time()
-    if "query" in path:
-        t_last = last_call.get(path)
-        delta = t_now - t_last if t_last is not None else query_delay
 
-        if delta < query_delay:
-            time.sleep((query_delay - delta))
-
-        t_now = time.time()
-
-    last_call[path] = t_now
-    timestamp = str(round(t_now * 1000))
     headers["Token"] = token
     headers["Lang"] = lang
     headers["User-Agent"] = user_agent
     headers["Timezone"] = time_zone
-    headers["Timestamp"] = timestamp
+    headers["Timestamp"] = str(int(datetime.now(timezone.utc).timestamp() * 1000))
     headers["Content-Type"] = "application/json"
 
     if login == 0:
@@ -332,7 +314,6 @@ def signed_header(path, login = 0):
 next_foxessapi_counter += 1
 signed_get_error_code = next_foxessapi_counter * 100 + 1
 def signed_get(path, params = None, login = 0):
-    global fox_domain, debug_setting, http_timeout, http_tries, response_time
 
     fn = inspect.currentframe().f_code.co_name + "(): "
 
@@ -341,11 +322,8 @@ def signed_get(path, params = None, login = 0):
         headers = signed_header(path, login)
 
         try:
-            t_now = time.time()
-            response = requests.get(url=fox_domain + path, headers=headers, params=params, timeout=http_timeout)
-            response_time[path] = time.time() - t_now
+            return requests.get(url=fox_domain + path, headers=headers, params=params, timeout=http_timeout)
 
-            return response
         except Exception as e:
             raise FoxESSAPIError(signed_get_error_code, f"{fn}e: {str(e)}, Path: {path}, Headers: {headers}")
 
@@ -354,7 +332,6 @@ def signed_get(path, params = None, login = 0):
 next_foxessapi_counter += 1
 signed_post_error_code = next_foxessapi_counter * 100 + 1
 def signed_post(path, body = None, login = 0):
-    global fox_domain, debug_setting, http_timeout, http_tries, response_time
 
     data = json.dumps(body)
 
@@ -363,34 +340,12 @@ def signed_post(path, body = None, login = 0):
         headers = signed_header(path, login)
 
         try:
-            t_now = time.time()
-            response = requests.post(url=fox_domain + path, headers=headers, data=data, timeout=http_timeout)
-            response_time[path] = time.time() - t_now
+            return requests.post(url=fox_domain + path, headers=headers, data=data, timeout=http_timeout)
 
-            return response
         except Exception as e:
             raise FoxESSAPIError(signed_post_error_code, f"{fn}e: {str(e)}, Path: {path}, Headers: {headers}")
 
     return MockResponse(999, message)
-
-def setting_delay():
-
-    return
-
-    global update_delay, update_time, device_sn
-
-    sn = device_sn if device_sn is not None else ""
-    t_now = time.time()
-    t_last = update_time.get(sn)
-
-    delta = t_now - t_last if t_last is not None else update_delay
-    if delta < update_delay:
-        time.sleep(update_delay - delta)
-        t_now = time.time()
-
-    update_time[sn] = t_now
-
-    return
 
 ##################################################################################################
 # get error messages / error handling
@@ -923,6 +878,7 @@ def get_heating():
     items = {"result": result}
     for i in result["dataList"]:
         n = i["name"]
+
         if "time" in n:
             j = n[:5]
 
@@ -932,92 +888,17 @@ def get_heating():
             k = "end" if "End" in n else "start" if "Start" in n else "enable"
             if k == "enable":
                 items[j]["enable"] = 0 if i["value"] == "disable" else 1
+
             else:
                 t = (int(i["value"]) / 60) if "Minute" in n else int(i["value"])
                 items[j][k] += t
+
         else:
             items[i["name"]] = i["value"]
 
     device["heating"] = items
 
     return items
-
-def set_time(body, s, time):
-
-    if time is None:
-        body[s + "Enable"] = "disable"
-        body[s + "StartHour"] = "0"
-        body[s + "StartMinute"] = "0"
-        body[s + "EndHour"] = "0"
-        body[s + "EndMinute"] = "0"
-    else:
-        body[s + "Enable"] = "enable" if time["enable"] == 1 else "disable"
-        t = time_hours(time["start"])
-        body[s + "StartHour"] = str(int(t))
-        body[s + "StartMinute"] = str(int(60 * (t - int(t)) + 0.5))
-        t = time_hours(time["end"])
-        body[s + "EndHour"] = str(int(t))
-        body[s + "EndMinute"] = str(int(60 * (t - int(t)) + 0.5))
-
-    return
-
-next_foxessapi_counter += 1
-set_heating_error_code = next_foxessapi_counter * 100 + 1
-def set_heating(enable=None, start=None, end=None, time1=None, time2=None, time3=None):
-    global device_sn, device
-
-    fn = inspect.currentframe().f_code.co_name + "(): "
-
-    check_for_apikey(fn, set_heating_error_code)
-
-    if get_device() is None:
-        raise FoxESSAPIError(set_heating_error_code + 10, f"{fn}No devices returned by API")
-
-    if get_heating() is None:
-        return 0
-
-    body = {"sn": device_sn}
-    body["batteryWarmUpEnable"] = "disable" if enable is not None and enable == 0 else "enable"
-    body["startTemperature"] = str(start if start is not None else 9)
-    body["endTemperature"] = str(end if end is not None else 12)
-    set_time(body, "time1", time1)
-    set_time(body, "time2", time2)
-    set_time(body, "time3", time3)
-
-    response = signed_post(path="/op/v0/device/batteryHeating/set", body=body)
-
-    result = get_result(fn, response, set_heating_error_code + 20)
-
-    return 1
-
-##################################################################################################
-# get charge times and save to battery_settings
-##################################################################################################
-
-next_foxessapi_counter += 1
-get_charge_error_code = next_foxessapi_counter * 100 + 1
-def get_charge():
-    global device_sn, battery_settings, debug_setting
-
-    fn = inspect.currentframe().f_code.co_name + "(): "
-
-    check_for_apikey(fn, get_charge_error_code)
-
-    if get_device() is None:
-        raise FoxESSAPIError(get_charge_error_code + 10, f"{fn}No devices returned by API")
-
-    if battery_settings is None:
-        battery_settings = {}
-
-    params = {"sn": device_sn}
-    response = signed_get(path="/op/v0/device/battery/forceChargeTime/get", params=params)
-
-    result = get_result(fn, response, get_charge_error_code + 20)
-
-    battery_settings["times"] = result
-
-    return battery_settings
-
 
 ##################################################################################################
 # get min soc settings and save in battery_settings
@@ -1442,7 +1323,6 @@ def set_schedule(periods=None, enable=True):
 # get real time data
 ##################################################################################################
 
-# get real time data
 next_foxessapi_counter += 1
 get_real_error_code = next_foxessapi_counter * 100 + 1
 def get_real(v = None, sns = None, version = 0):

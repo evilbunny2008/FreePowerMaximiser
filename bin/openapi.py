@@ -96,39 +96,6 @@ cache_dir = os.path.join(parent_dir, "cache")
 os.makedirs(cache_dir, exist_ok=True)
 CACHE_FILE = os.path.join(cache_dir, "foxess_objects.pkl")
 
-# load on start
-data = None
-if os.path.exists(CACHE_FILE):
-
-    print("Loading cached objects...")
-
-    try:
-        with open(CACHE_FILE, "rb") as f:
-            data = pickle.load(f)
-    except Exception as e:
-        data = None
-
-    print("Done loading...")
-
-if data is not None:
-
-    print("Reading cached objects...")
-
-    batteries = data.get("batteries", batteries)
-    battery = data.get("battery", battery)
-    device_list = data.get("device_list", device_list)
-    device = data.get("device", device)
-    device_sn = data.get("device_sn", device_sn)
-    logger_list = data.get("logger_list", logger_list)
-    logger = data.get("logger", logger)
-    logger_sn = data.get("logger_sn", logger_sn)
-    messages = data.get("messages", messages)
-    site_list = data.get("site_list", site_list)
-    site = data.get("site", site)
-    station_id = data.get("station_id", station_id)
-
-    print("Done reading...")
-
 # charge rates based on residual_handling. Index is bms temperature
 
 battery_params = {
@@ -201,6 +168,35 @@ class MockResponse:
 # check for returned data, no results and apikey
 ##################################################################################################
 
+def load_cache_objects():
+
+    global batteries, battery, device_list, device, device_sn, logger_list, logger, logger_sn, messages, site_list, site, station_id
+
+    # load on start
+    data = None
+    if os.path.exists(CACHE_FILE):
+
+        try:
+            with open(CACHE_FILE, "rb") as f:
+                data = pickle.load(f)
+        except Exception as e:
+            data = None
+
+    if data is not None:
+
+        batteries = data.get("batteries", batteries)
+        battery = data.get("battery", battery)
+        device_list = data.get("device_list", device_list)
+        device = data.get("device", device)
+        device_sn = data.get("device_sn", device_sn)
+        logger_list = data.get("logger_list", logger_list)
+        logger = data.get("logger", logger)
+        logger_sn = data.get("logger_sn", logger_sn)
+        messages = data.get("messages", messages)
+        site_list = data.get("site_list", site_list)
+        site = data.get("site", site)
+        station_id = data.get("station_id", station_id)
+
 def save_cache_objects():
 
     data = {}
@@ -220,8 +216,6 @@ def save_cache_objects():
     data["var_table"] = var_table
     data["var_list"] = var_list
     data["work_mode"] = work_mode
-
-    print("Saving data:")
 
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(data, f)

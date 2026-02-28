@@ -46,11 +46,7 @@ today = date.today()
 def save_cache_objects():
     """ Cache API obbjects before exiting """
 
-    print(f"Saving cached objects...")
-
     openapi.save_cache_objects()
-
-    print(f"Done!")
 
 def should_download_now(schedule_time, filename):
     """
@@ -1079,5 +1075,7 @@ if __name__ == "__main__":
     openapi.time_zone = tz
 
     openapi.debug_setting = DEBUG
+
+    openapi.load_cache_objects()
 
     main()

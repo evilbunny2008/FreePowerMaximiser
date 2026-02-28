@@ -17,6 +17,7 @@ import sys
 from astral import Observer, sun, SunDirection
 from datetime import date, datetime, time, timedelta
 from itertools import zip_longest
+from openapi import FoxESSAPIError
 from pprint import pprint
 from zoneinfo import ZoneInfo
 
@@ -378,6 +379,11 @@ def do_download(url, filename):
 def get_json(now, url, filename):
     # Check each scheduled time
     download_performed = False
+
+    if "solcast.com" in url:
+        SCHEDULED_TIMES = SOLCAST_SCHEDULED_TIMES
+    else:
+        SCHEDULED_TIMES = FSOLAR_SCHEDULED_TIMES
 
     if not os.path.exists(filename):
         download_performed = do_download(url, filename)
@@ -929,7 +935,7 @@ if __name__ == "__main__":
     UTC_TZ = ZoneInfo("UTC")
 
     # Scheduled download times
-    SCHEDULED_TIMES = [
+    SOLCAST_SCHEDULED_TIMES = [
         datetime.combine(today, time(10, 50), tzinfo=LOCAL_TZ),
         datetime.combine(today, time(12, 0), tzinfo=LOCAL_TZ),
         datetime.combine(today, time(13, 0), tzinfo=LOCAL_TZ),
@@ -959,11 +965,19 @@ if __name__ == "__main__":
         print(f"solar_dropoff: {solar_dropoff.time()}")
 
     if solar_dropoff < be_start:
-        SCHEDULED_TIMES.extend([datetime.combine(today, time(12, 30), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(today, time(12, 30), tzinfo=LOCAL_TZ)])
     else:
-        SCHEDULED_TIMES.extend([datetime.combine(today, time(18, 0), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(today, time(18, 0), tzinfo=LOCAL_TZ)])
 
-    SCHEDULED_TIMES.sort()
+    SOLCAST_SCHEDULED_TIMES.sort()
+
+    FSOLAR_SCHEDULED_TIMES = []
+    for hour in range(0, 19):
+        for minute in [0, 30]:
+            new_time = datetime.combine(today, time(hour, minute), tzinfo=LOCAL_TZ)
+
+            if new_time < solar_dropoff:
+                FSOLAR_SCHEDULED_TIMES.extend([new_time])
 
     BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
 

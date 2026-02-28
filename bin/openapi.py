@@ -3,7 +3,7 @@
 
 ------------------------------------------------------------------------------------------------------------------
 
-This is a minimised version of openapi.py for just the Fox ESS OpenAPI, and was forked from:
+This is a minimised and heavily modified version of openapi.py for just the Fox ESS OpenAPI, and was forked from:
 https://github.com/TonyM1958/FoxESS-Cloud/blob/e0626202cbf5cd41356bdba0c7e3c13ab4b501f8/src/foxesscloud/openapi.py
 
 What"s removed:
@@ -19,7 +19,9 @@ What"s removed:
 Module:   Fox ESS Cloud using Open API
 Updated:  19 January 2025
 By:       Tony Matthews
+
 """
+
 ##################################################################################################
 # Code for getting and setting inverter data via the Fox ESS cloud api site, including
 # getting forecast data from solcast.com.au and sending inverter data to pvoutput.org
@@ -30,6 +32,7 @@ version = "2.9.4.1"
 #print(f"FoxESS-Cloud Open API version {version}")
 
 import hashlib
+import inspect
 import json
 import os.path
 import requests
@@ -50,7 +53,6 @@ lang = "en"
 batteries = None
 battery = None
 battery_data = ["soc", "volt", "current", "power", "temperature", "residual", "soh", "throughput"]
-battery_info_app_key = "aug938dqt5cbqhvq69ixc4v39q6wtw"
 battery_settings = None
 battery_vars = ["SoC", "invBatVolt", "invBatCurrent", "invBatPower", "batTemperature", "ResidualEnergy", "SOH", "energyThroughput" ]
 cells_per_battery = [16, 18, 15]
@@ -67,10 +69,11 @@ logger = None
 logger_sn = None
 max_periods = 8
 messages = None
-name_list = ["ExportLimit","MinSoc","MinSocOnGrid","MaxSoc","GridCode","WorkMode","ExportLimitPower",
-    "EpsOutPut","MaxSetChargeCurrent","MaxSetDischargeCurrent","ECOMode","Meter1Enable","Meter2Enable","SysSwitch","GroundProtection"]
+name_list = ["ExportLimit", "MinSoc", "MinSocOnGrid", "MaxSoc", "GridCode", "WorkMode", "ExportLimitPower", "EpsOutPut", "MaxSetChargeCurrent",
+             "MaxSetDischargeCurrent", "ECOMode", "Meter1Enable", "Meter2Enable", "SysSwitch", "GroundProtection"]
 named_settings = {}
-power_vars = ["generationPower", "feedinPower","loadsPower","gridConsumptionPower","batChargePower", "batDischargePower", "pvPower", "meterPower2"]
+next_foxessapi_counter = 50000
+power_vars = ["generationPower", "feedinPower", "loadsPower", "gridConsumptionPower", "batChargePower", "batDischargePower", "pvPower", "meterPower2"]
 report_vars = ["generation", "feedin", "loads", "gridConsumption", "chargeEnergyToTal", "dischargeEnergyToTal", "PVEnergyTotal"]
 report_names = ["Generation", "Grid Export", "Consumption", "Grid Import", "Battery Charge", "Battery Discharge", "PV Yield"]
 residual_handling = 0
@@ -136,73 +139,166 @@ update_time = {}       # last inverter setting update time
 ##################################################################################################
 ##################################################################################################
 
+class FoxESSAPIError(Exception):
+    """Exception raised for custom error scenarios.
+
+    Attributes:
+        error_code -- the error code returned from Fox ESS's API
+        message -- explanation of the error
+    """
+
+    def __init__(self, error_code, message):
+
+        self.error_code = error_code
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+
+        return f"Error! Error Code: {self.error_code}: {self.message}"
+
+class MockResponse:
+
+    def __init__(self, status_code, reason):
+
+        self.status_code = status_code
+        self.reason = reason
+        self.json = None
+
+##################################################################################################
+# check for returned data, no results and apikey
+##################################################################################################
+
+def check_for_apikey(fn, error_code):
+
+    if fn is None or fn == "":
+        fn = inspect.currentframe().f_code.co_name + "(): "
+
+    if api_key is None:
+        raise FoxESSAPIError(error_code, f"{fn}Please generate an API Key at foxesscloud.com")
+
+    if len(api_key) != 36:
+        raise FoxESSAPIError(error_code + 1, f"{fn}Invalid API key, len: {len(api_key)}, it should be 36")
+
+def no_data_returned(fn, error_code):
+
+    if fn is None or fn == "":
+        fn = inspect.currentframe().f_code.co_name + "(): "
+
+    raise FoxESSAPIError(error_code, f"{fn}No data returned")
+
+def get_result(fn, response, error_code):
+
+    if response.status_code != 200:
+        raise FoxESSAPIError(response.status_code, fn + response.reason)
+
+    result = response.json().get("result")
+    errno = response.json().get("errno")
+    if result is None or len(result) <= 0:
+
+        if errno is None or errno <= 0:
+            errno = error_code
+
+        no_data_returned(fn, errno)
+
+    if errno is not None and errno > 0:
+        if errno == 44096:
+            raise FoxESSAPIError(errno, f"{fn}Cannot update settings when schedule is active.")
+
+        raise FoxESSAPIError(errno, f"{fn}{errno_message(response)}")
+
+    return result
+
+##################################################################################################
+# Moving on...
+##################################################################################################
+
+next_foxessapi_counter += 1
+convert_date_error_code = next_foxessapi_counter * 100 + 1
 def convert_date(d):
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
     if d is not None and len(d) < 18:
+
         if len(d) == 10:
             d += " 00:00:00"
         elif len(d) == 13:
             d += ":00:00"
         else:
             d += ":00"
+
     try:
         t = datetime.now() if d is None else datetime.strptime(d, "%Y-%m-%d %H:%M:%S")
     except Exception as e:
-        output(f"** convert_date(): {str(e)}")
-        return None
+        raise FoxESSAPIError(convert_date_error_code, f"{fn}d: {d}, e: {str(e)}")
+
     return t
 
 # return query date as a dictionary with year, month, day, hour, minute, second
 def query_date(d, offset = None):
+
     t = convert_date(d)
+
     if offset is not None:
         t += timedelta(days = offset)
+
     return {"year": t.year, "month": t.month, "day": t.day, "hour": t.hour, "minute": t.minute, "second": t.second}
 
 # return query date as begin and end timestamps in milliseconds
+next_foxessapi_counter += 1
+query_time_error_code = next_foxessapi_counter * 100 + 1
 def query_time(d, time_span):
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
     if d is not None and len(d) < 18:
+
         if len(d) == 10:
             d += " 00:00:00"
         elif len(d) == 13:
             d += ":00:00"
         else:
             d += ":00"
+
     try:
         t = datetime.now().replace(minute=0, second=0, microsecond=0) if d is None else convert_date(d)
     except Exception as e:
-        output(f"** query_time(): {str(e)}")
-        return (None, None)
+        raise FoxESSAPIError(query_time_error_code, f"{fn}e: {str(e)}, d: {d}, time_span: {time_span}")
+
     t_begin = round(t.timestamp())
+
     if time_span == "hour":
         t_end = round(t_begin + 3600)
     else:
         t_end = round(t.replace(hour=23, minute=59, second=59, microsecond=999999).timestamp())
+
     return (t_begin * 1000, t_end * 1000)
 
 # interpolate a result from a list of values
 def interpolate(f, v, wrap=0):
+
     if len(v) == 0:
         return None
+
     if f < 0.0:
         return v[0]
     elif wrap == 0 and f >= len(v) - 1:
         return v[-1]
+
     i = int(f) % len(v)
     x = f % 1.0
     j = (i + 1) %  len(v)
+
     return v[i] * (1-x) + v[j] * x
 
 # return the average of a list
 def avg(x):
+
     if len(x) == 0:
         return None
-    return sum(x) / len(x)
 
-class MockResponse:
-    def __init__(self, status_code, reason):
-        self.status_code = status_code
-        self.reason = reason
-        self.json = None
+    return sum(x) / len(x)
 
 def signed_header(path, login = 0):
     global api_key, user_agent, time_zone, lang, debug_setting, last_call, query_delay
@@ -231,15 +327,14 @@ def signed_header(path, login = 0):
     if login == 0:
         headers["Signature"] = hashlib.md5(fr"{path}\r\n{headers['Token']}\r\n{headers['Timestamp']}".encode("UTF-8")).hexdigest()
 
-    output(f"path = {path}", 3)
-    output(f"headers = {headers}", 3)
-
     return headers
 
+next_foxessapi_counter += 1
+signed_get_error_code = next_foxessapi_counter * 100 + 1
 def signed_get(path, params = None, login = 0):
     global fox_domain, debug_setting, http_timeout, http_tries, response_time
 
-    output(f"params = {params}", 3)
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
     message = None
     for i in range(0, http_tries):
@@ -252,18 +347,16 @@ def signed_get(path, params = None, login = 0):
 
             return response
         except Exception as e:
-            message = str(e)
-            output(f"** signed_get(): {message}\n  path = {path}\n  headers = {headers}")
-            continue
+            raise FoxESSAPIError(signed_get_error_code, f"{fn}e: {str(e)}, Path: {path}, Headers: {headers}")
 
     return MockResponse(999, message)
 
+next_foxessapi_counter += 1
+signed_post_error_code = next_foxessapi_counter * 100 + 1
 def signed_post(path, body = None, login = 0):
     global fox_domain, debug_setting, http_timeout, http_tries, response_time
 
     data = json.dumps(body)
-
-    output(f"body = {data}", 3)
 
     message = None
     for i in range(0, http_tries):
@@ -276,13 +369,14 @@ def signed_post(path, body = None, login = 0):
 
             return response
         except Exception as e:
-            message = str(e)
-            output(f"** signed_post(): {message}\n  path = {path}\n  headers = {headers}")
-            continue
+            raise FoxESSAPIError(signed_post_error_code, f"{fn}e: {str(e)}, Path: {path}, Headers: {headers}")
 
     return MockResponse(999, message)
 
 def setting_delay():
+
+    return
+
     global update_delay, update_time, device_sn
 
     sn = device_sn if device_sn is not None else ""
@@ -293,7 +387,6 @@ def setting_delay():
     if delta < update_delay:
         time.sleep(update_delay - delta)
         t_now = time.time()
-        output(f"-- setting_delay() --", 2)
 
     update_time[sn] = t_now
 
@@ -303,22 +396,19 @@ def setting_delay():
 # get error messages / error handling
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_message_error_code = next_foxessapi_counter * 100 + 1
 def get_messages():
     global debug_setting, messages, user_agent
 
-    output(f"getting messages", 2)
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_message_error_code)
+
     headers = {"User-Agent": user_agent, "Content-Type": "application/json;charset=UTF-8", "Connection": "keep-alive"}
     response = signed_get(path="/c/v0/errors/message", login=1)
 
-    if response.status_code != 200:
-        output(f"** get_messages() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-    if result is None:
-        errno = response.json().get("errno")
-        output(f"** get_messages(), no result data, {errno}")
-        return None
+    result = get_result(fn, response, get_message_error_code + 10)
 
     messages = result.get("messages")
 
@@ -327,40 +417,42 @@ def get_messages():
 def errno_message(response):
     global messages, lang
 
-    errno = f"{response.json().get('errno')}"
+    errno = response.json().get("errno")
     msg = response.json().get("msg")
-    s = f"errno = {errno}"
 
-    if msg is not None:
-        return s + f": {msg}"
+    if msg is not None and errno is not None and errno > 0:
+        return errno, msg
 
-    if messages is None or messages.get(lang) is None or messages[lang].get(errno) is None:
-        return s
+    if messages is None or messages.get(lang) is None:
+        if errno is not None and errno > 0:
+            return errno, None
+        else:
+            return -1, None
 
-    return s + f": {messages[lang][errno]}"
+    if errno is None or errno <= 0:
+            return -1, None
+
+    if messages[lang].get(errno) is None:
+        return errno, None
+
+    return errno, messages[lang][errno]
 
 ##################################################################################################
 # get access info
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_access_count_error_code = next_foxessapi_counter * 100 + 1
 def get_access_count():
     global debug_setting, messages, lang
 
-    if api_key is None:
-        output(f"** please generate an API Key at foxesscloud.com and provide this (f.api_key='your API key')")
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting access info", 2)
+    check_for_apikey(fn, get_access_count_error_code)
 
     response = signed_get(path="/op/v0/user/getAccessCount")
-    if response.status_code != 200:
-        output(f"** get_access_count() got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_access_count(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_access_count_error_code + 10)
 
     return result
 
@@ -368,12 +460,14 @@ def get_access_count():
 # get list of variables
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_vars_error_code = next_foxessapi_counter * 100 + 1
 def get_vars():
     global var_table, var_list, debug_setting, messages, lang
 
-    if api_key is None:
-        output(f"** please generate an API Key at foxesscloud.com and provide this (f.api_key='your API key')")
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_vars_error_code)
 
     if messages is None:
         get_messages()
@@ -381,18 +475,9 @@ def get_vars():
     if var_list is not None:
         return var_list
 
-    output(f"getting variables", 2)
     response = signed_get(path="/op/v0/device/variable/get")
 
-    if response.status_code != 200:
-        output(f"** get_vars() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_vars(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_vars_error_code + 10)
 
     var_table = result
     var_list = []
@@ -407,8 +492,14 @@ def get_vars():
 # get list of sites
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_site_error_code = next_foxessapi_counter * 100 + 1
 def get_site(name=None):
     global site_list, site, debug_setting, station_id
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_site_error_code)
 
     if get_vars() is None:
         return None
@@ -416,24 +507,16 @@ def get_site(name=None):
     if site is not None and name is None:
         return site
 
-    output(f"getting sites", 2)
     site = None
     station_id = None
     body = {"currentPage": 1, "pageSize": 100 }
     response = signed_post(path="/op/v0/plant/list", body=body)
-    if response.status_code != 200:
-        output(f"** get_sites() got list response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_site(), no list result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_site_error_code + 10)
 
     total = result.get("total")
     if total is None or total == 0 or total > 100:
-        output(f"** invalid list of sites returned: {total}")
-        return None
+        raise FoxESSAPIError(get_site_error_code + 20, f"{fn}Invalid list of sites returned: {total}")
 
     site_list = result.get("data")
     n = None
@@ -445,25 +528,16 @@ def get_site(name=None):
                     break
 
         if n is None:
-            output(f"\nget_site(): please provide a name from the list:")
-            for s in site_list:
-                output(f"Name={s['name']}")
-
             return None
+
     else:
         n = 0
 
     station_id = site_list[n]["stationID"]
     params = {"id": station_id }
     response = signed_get(path="/op/v0/plant/detail", params=params)
-    if response.status_code != 200:
-        output(f"** get_sites() got detail response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_site(), no detail result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_site_error_code + 30)
 
     site = result
     site["stationID"] = site_list[n]["stationID"]
@@ -475,47 +549,45 @@ def get_site(name=None):
 # get list of data loggers
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_logger_error_code = next_foxessapi_counter * 100 + 1
 def get_logger(sn=None):
     global logger_list, logger, logger_sn, debug_setting
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_logger_error_code)
+
     if get_vars() is None:
-        return None
+        raise FoxESSAPIError(get_logger_error_code + 10, f"{fn}get_vars() is None")
 
     if logger is not None and sn is None:
         return logger
 
-    output(f"getting loggers", 2)
     body = {"pageSize": 100, "currentPage": 1}
     response = signed_post(path="/op/v0/module/list", body=body)
-    if response.status_code != 200:
-        output(f"** get_logger() got list response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_logger(), no list result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_logger_error_code + 20)
 
     total = result.get("total")
     logger_list = result.get("data")
     if total is None or total == 0 or total > 100 or type(logger_list) is not list:
-        output(f"** invalid list of loggers returned: {total}")
-        return None
+        raise FoxESSAPIError(get_logger_error_code + 30, f"{fn}Invalid list of loggers returned: {total}")
 
     n = None
     if len(logger_list) > 1:
+
         if sn is not None:
+
             for i in range(len(logger_list)):
+
                 if site_list[i]["moduleSN"][:len(sn)].upper() == sn.upper():
                     n = i
                     break
 
         if n is None:
-            output(f"\nget_logger(): please provide a serial number from this list:")
-            for l in logger_list:
-                output(f"SN={l['moduleSN']}, Plant={l['plantName']}, StationID={l['stationID']}")
-
             return None
+
     else:
         n = 0
 
@@ -524,13 +596,20 @@ def get_logger(sn=None):
 
     return logger
 
+next_foxessapi_counter += 1
+get_signal_error_code = next_foxessapi_counter * 100 + 1
 def get_signal(sn=None):
     global logger_list, logger, logger_sn, debug_setting
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_signal_error_code)
+
     if get_vars() is None:
-        return None
+        raise FoxESSAPIError(get_signal_error_code + 10, f"{fn}get_vars() is None")
 
     if sn is None:
+
         if logger_sn is None:
             get_logger()
 
@@ -539,19 +618,10 @@ def get_signal(sn=None):
         if sn is None:
             return None
 
-    output(f"getting signal", 2)
     body = {"sn": sn}
     response = signed_post(path="/op/v0/module/getSignal", body=body)
 
-    if response.status_code != 200:
-        output(f"** get_signal() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_signal(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_signal_error_code + 20)
 
     return result
 
@@ -559,11 +629,17 @@ def get_signal(sn=None):
 # get list of devices and select one, using the serial number if there is more than 1
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_device_error_code = next_foxessapi_counter * 100 + 1
 def get_device(sn=None, device_type=None):
     global device_list, device, device_sn, battery, debug_setting, schedule, remote_settings
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_device_error_code)
+
     if get_vars() is None:
-        return None
+        raise FoxESSAPIError(get_device_error_code + 10, f"{fn}get_vars() is None")
 
     if device is not None:
         if sn is None:
@@ -572,42 +648,34 @@ def get_device(sn=None, device_type=None):
         if device_sn[:len(sn)].upper() == sn.upper():
             return device
 
-    output(f"getting device", 2)
     if sn is None and device_sn is not None and len(device_sn) == 15:
         sn = device_sn
 
     # get device list
     body = {"pageSize": 100, "currentPage": 1}
     response = signed_post(path="/op/v0/device/list", body=body)
-    if response.status_code != 200:
-        output(f"** get_device() list got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_device(), no list result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_device_error_code + 20)
 
     total = result.get("total")
     if total is None or total == 0 or total > 100:
-        output(f"** invalid list of devices returned: {total}")
-        return None
+        raise FoxESSAPIError(get_device_error_code + 30, f"{fn}Invalid list of devices returned: {total}")
 
     device_list = result.get("data")
+
     # look for the device we want in the list
     n = None
     if len(device_list) == 1 and sn is None:
         n = 0
     else:
+
         for i in range(len(device_list)):
+
             if device_list[i]["deviceSN"][:len(sn)].upper() == sn.upper():
                 n = i
                 break
 
         if n is None:
-            output(f"\nget_device(): please provide a serial number from this list:")
-            for d in device_list:
-                output(f"SN={d['deviceSN']}, Type={d['deviceType']}")
             return None
 
     # load information for the device
@@ -615,14 +683,7 @@ def get_device(sn=None, device_type=None):
     params = {"sn": device_sn }
     response = signed_get(path="/op/v1/device/detail", params=params)
 
-    if response.status_code != 200:
-        output(f"** get_device() got detail response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_device(), no detail result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_device_error_code + 30)
 
     device = result
     battery = None
@@ -638,10 +699,13 @@ def get_device(sn=None, device_type=None):
     if model_code[0] in "FGRST":
         phase = "1" if model_code[0] in "FGS" else "3"
         model_code = model_code[0] + phase + "-" + model_code[1:]
+
     elif model_code[:2] == "KH":
         model_code = "KH-" + model_code[2:]
+
     elif model_code[:4] == "AIO-":
         model_code = "AIO" + model_code[4:]
+
     elif model_code[:3] == "EVO":
         model_code = "EVO-" + model_code[4:]
 
@@ -649,12 +713,12 @@ def get_device(sn=None, device_type=None):
     model = parts[0]
     device["eps"] = ("E" in parts[-1]) or (model == "EVO" and "H" in parts[-1])
     if model not in ["F1", "G1", "R3", "S1", "T3", "KH", "H1", "AC1", "H3", "AC3", "AIOH1", "AIOH3", "EVO"]:
-        output(f"** device model not recognised for deviceType: {device['deviceType']}")
-        return device
+        raise FoxESSAPIError(get_device_error_code + 40, f"{fn}Device model not recognised for deviceType: {device['deviceType']}")
 
     device["model"] = model
     device["phase"] = 3 if model[-1:] == "3" else 1
     for p in parts[1:]:
+
         if p.replace(".", "").isnumeric():
             power = float(p)  / (1000 if model in ["F1", "S1"] else 1.0)
 
@@ -664,7 +728,7 @@ def get_device(sn=None, device_type=None):
             break
 
     if device.get("power") is None:
-        output(f"** device power not found for deviceType: {device['deviceType']}")
+        raise FoxESSAPIError(get_device_error_code + 50, f"{fn}Device power not found for deviceType: {device['deviceType']}")
 
     # set max charge current
     if model in ["F1", "G1", "R3", "S1", "T3"]:
@@ -684,30 +748,29 @@ def get_device(sn=None, device_type=None):
 # get generation info and save to device
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_generation_error_code = next_foxessapi_counter * 100 + 1
 def get_generation(update=1):
     global device_sn, device
 
-    if get_device() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting generation", 2)
+    check_for_apikey(fn, get_generation_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_generation_error_code + 10, f"{fn}No devices returned by API")
+
     params = {"sn": device_sn}
     response = signed_get(path="/op/v0/device/generation", params=params)
-    if response.status_code != 200:
-        output(f"** get_generation() got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_generation(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_generation_error_code + 20)
 
     if result.get("today") is None:
         result["today"] = 0.0
 
     if update == 1:
         device["generationToday"] = result["today"]
-        device["generationTotal"] = result["cumulative"] 
+        device["generationTotal"] = result["cumulative"]
 
     return result
 
@@ -715,14 +778,20 @@ def get_generation(update=1):
 # get battery info and save to battery
 ##################################################################################################
 
+next_foxessapi_counter += 1
+total_battery_capacity_error_code = next_foxessapi_counter * 100 + 1
 def total_battery_capacity():
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(total_battery_capacity_error_code, f"{fn}No devices returned by API")
 
     battery = {}
     rated = 0
     count = 0
     for b in device["batteryList"]:
+
         if b.get("type") == "bmu" and b.get("capacity") is not None:
             rated += b["capacity"]
             count += 1
@@ -730,20 +799,20 @@ def total_battery_capacity():
     if count > 0:
         battery["count"] = count
         battery["ratedCapacity"] = rated
+
     else:
-        output(f"** get_battery(): battery capacity not available")
-        return None
+        raise FoxESSAPIError(total_battery_capacity_error_code + 1, f"{fn}No batteries returned from API")
 
     return battery
 
+next_foxessapi_counter += 1
+get_battery_error_code = next_foxessapi_counter * 100 + 1
 def get_battery(v=None, rated=None, count=None):
     global device_sn, battery, debug_setting, residual_handling, battery_params
 
-    battery = total_battery_capacity()
-    if battery is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting battery", 2)
+    battery = total_battery_capacity()
 
     if v is None:
         v = battery_vars
@@ -753,25 +822,24 @@ def get_battery(v=None, rated=None, count=None):
     for i in range(0, len(battery_vars)):
         battery[battery_data[i]] = result[i].get("value")
 
-    if debug_setting > 1:
-        print(f"raw battery = {battery}")
-
     if battery.get("status") is None:
         battery["status"] = 0 if battery.get("volt") is None or battery["volt"] <= 10 else 1
 
     if battery["status"] == 0:
-        output(f"** get_battery(): battery status not available")
-        return None
+        raise FoxESSAPIError(get_battery_error_code, f"{fn}Battery status not available")
 
     capacity = battery["ratedCapacity"] / 1000 * (battery["soh"] if battery.get("soh") is not None else 100) / 100
     soc = battery.get("soc")
     battery["residual_handling"] = residual_handling
+
     if battery["residual_handling"] == 1:
         capacity = battery["residual"] / soc * 100
         battery["soh"] = round(capacity * 1000 / battery["ratedCapacity"] * 100, 1)
+
     elif battery["residual_handling"] == 2:
         capacity = battery.get("residual")
         battery["soh"] = round(capacity * 1000 / battery["ratedCapacity"] * 100, 1)
+
     elif battery["residual_handling"] == 3:
         capacity = (battery["residual"] * battery["count"]) if battery.get("residual") is not None else None
         battery["soh"] = round(capacity / battery["ratedCapacity"] * 100, 1)
@@ -790,8 +858,12 @@ def get_battery(v=None, rated=None, count=None):
 
     return battery
 
+next_foxessapi_counter += 1
+get_batteries_error_code = next_foxessapi_counter * 100 + 1
 def get_batteries(rated=None, count=None):
     global battery, batteries
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
     if type(rated) is not list:
         rated = [rated]
@@ -802,28 +874,28 @@ def get_batteries(rated=None, count=None):
     get_battery(rated=rated[0], count=count[0])
 
     if battery is None:
-        return None
+        raise FoxESSAPIError(get_batteries_error_code, f"{fn}No batteries found")
 
     batteries = [battery]
 
     return batteries
 
+next_foxessapi_counter += 1
+get_battery_real_error_code = next_foxessapi_counter * 100 + 1
 def get_battery_real():
     global device_sn, device
-    if get_device() is None:
-        return None
 
-    output(f"getting battery real", 2)
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_battery_real_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_battery_real_error_code, f"{fn}No devices returned by API")
+
     params = {"sn": device_sn}
     response = signed_get(path="/op/v0/device/battery/real/query", params=params)
-    if response.status_code != 200:
-        output(f"** get_battery_real() got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    if result is None:
-        output(f"** get_battery_real(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_battery_real_error_code + 10)
 
     return result
 
@@ -831,51 +903,47 @@ def get_battery_real():
 # battery heating settings
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_heating_error_code = next_foxessapi_counter * 100 + 1
 def get_heating():
     global device_sn, device
 
-    if get_device() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting battery heating", 2)
+    check_for_apikey(fn, get_heating_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_heating_error_code + 10, f"{fn}No devices returned by API")
+
     body = {"sn": device_sn}
     response = signed_post(path="/op/v0/device/batteryHeating/get", body=body)
-    if response.status_code != 200:
-        output(f"** get_battery_heating() got response code {response.status_code}: {response.reason}")
-        return None
 
-    errno = response.json().get("errno")
-    result = response.json().get("result")
-    if errno != 0 and errno != 41200:
-        output(f"** get_battery_heating(): {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_heating_error_code + 1)
 
-    if result is None:
-        items = None
-    else:
-        items = {"result": result}
-        for i in result["dataList"]:
-            n = i["name"]
-            if "time" in n:
-                j = n[:5]
+    items = {"result": result}
+    for i in result["dataList"]:
+        n = i["name"]
+        if "time" in n:
+            j = n[:5]
 
-                if items.get(j) is None:
-                    items[j] = {"enable": 0, "start": 0.0, "end": 0.0}
+            if items.get(j) is None:
+                items[j] = {"enable": 0, "start": 0.0, "end": 0.0}
 
-                k = "end" if "End" in n else "start" if "Start" in n else "enable"
-                if k == "enable":
-                    items[j]["enable"] = 0 if i["value"] == "disable" else 1
-                else:
-                    t = (int(i["value"]) / 60) if "Minute" in n else int(i["value"])
-                    items[j][k] += t
+            k = "end" if "End" in n else "start" if "Start" in n else "enable"
+            if k == "enable":
+                items[j]["enable"] = 0 if i["value"] == "disable" else 1
             else:
-                items[i["name"]] = i["value"]
+                t = (int(i["value"]) / 60) if "Minute" in n else int(i["value"])
+                items[j][k] += t
+        else:
+            items[i["name"]] = i["value"]
 
     device["heating"] = items
 
     return items
 
 def set_time(body, s, time):
+
     if time is None:
         body[s + "Enable"] = "disable"
         body[s + "StartHour"] = "0"
@@ -893,16 +961,21 @@ def set_time(body, s, time):
 
     return
 
+next_foxessapi_counter += 1
+set_heating_error_code = next_foxessapi_counter * 100 + 1
 def set_heating(enable=None, start=None, end=None, time1=None, time2=None, time3=None):
     global device_sn, device
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, set_heating_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(set_heating_error_code + 10, f"{fn}No devices returned by API")
 
     if get_heating() is None:
         return 0
 
-    output(f"setting battery heating", 2)
     body = {"sn": device_sn}
     body["batteryWarmUpEnable"] = "disable" if enable is not None and enable == 0 else "enable"
     body["startTemperature"] = str(start if start is not None else 9)
@@ -912,14 +985,8 @@ def set_heating(enable=None, start=None, end=None, time1=None, time2=None, time3
     set_time(body, "time3", time3)
 
     response = signed_post(path="/op/v0/device/batteryHeating/set", body=body)
-    if response.status_code != 200:
-        output(f"** set_battery_heating() got response code {response.status_code}: {response.reason}")
-        return None
 
-    errno = response.json().get("errno")
-    if errno != 0:
-        output(f"** set_battery_heating(): {errno_message(response)}")
-        return 0
+    result = get_result(fn, response, set_heating_error_code + 20)
 
     return 1
 
@@ -927,28 +994,25 @@ def set_heating(enable=None, start=None, end=None, time1=None, time2=None, time3
 # get charge times and save to battery_settings
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_charge_error_code = next_foxessapi_counter * 100 + 1
 def get_charge():
     global device_sn, battery_settings, debug_setting
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_charge_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(get_charge_error_code + 10, f"{fn}No devices returned by API")
 
     if battery_settings is None:
         battery_settings = {}
 
-    output(f"getting charge times", 2)
     params = {"sn": device_sn}
     response = signed_get(path="/op/v0/device/battery/forceChargeTime/get", params=params)
 
-    if response.status_code != 200:
-        output(f"** get_charge() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_charge(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_charge_error_code + 20)
 
     battery_settings["times"] = result
 
@@ -956,132 +1020,28 @@ def get_charge():
 
 
 ##################################################################################################
-# set charge times from battery_settings or parameters
-##################################################################################################
-
-# helper to format time period structure
-def time_period(t, n):
-    (enable, start, end) = (t["enable1"], t["startTime1"], t["endTime1"]) if n == 1 else (t["enable2"], t["startTime2"], t["endTime2"])
-    result = f"{start['hour']:02d}:{start['minute']:02d}-{end['hour']:02d}:{end['minute']:02d}"
-    if start["hour"] != end["hour"] or start["minute"] != end["minute"]:
-        result += f" Charge from grid" if enable else f" Battery Hold"
-
-    return result
-
-def set_charge(ch1=True, st1=0, en1=0, ch2=True, st2=0, en2=0, force = 0, enable=1):
-    global device_sn, battery_settings, debug_setting, time_period_vars
-
-    if get_device() is None:
-        return None
-
-    if battery_settings is None:
-        battery_settings = {}
-
-    if battery_settings.get("times") is None:
-        battery_settings["times"] = {}
-        battery_settings["times"]["enable1"]    = False
-        battery_settings["times"]["startTime1"] = {"hour": 0, "minute": 0}
-        battery_settings["times"]["endTime1"]   = {"hour": 0, "minute": 0}
-        battery_settings["times"]["enable2"]    = False
-        battery_settings["times"]["startTime2"] = {"hour": 0, "minute": 0}
-        battery_settings["times"]["endTime2"]   = {"hour": 0, "minute": 0}
-
-    flag = get_flag()
-    if flag is not None and flag.get("enable") == 1:
-        if force == 0:
-            output(f"** set_charge(): cannot set charge when a schedule is enabled")
-            return None
-
-        set_schedule(enable=0)
-
-    # configure time period 1
-    if st1 is not None:
-        if st1 == en1:
-            st1 = 0
-            en1 = 0
-            ch1 = False
-        else:
-            st1 = time_hours(st1)
-            en1 = time_hours(en1)
-
-        battery_settings["times"]["enable1"] = True if ch1 == True or ch1 == 1 else False
-        battery_settings["times"]["startTime1"]["hour"] = int(st1)
-        battery_settings["times"]["startTime1"]["minute"] = int(60 * (st1 - int(st1)) + 0.5)
-        battery_settings["times"]["endTime1"]["hour"] = int(en1)
-        battery_settings["times"]["endTime1"]["minute"] = int(60 * (en1 - int(en1)) + 0.5)
-
-    # configure time period 2
-    if st2 is not None:
-        if st2 == en2:
-            st2 = 0
-            en2 = 0
-            ch2 = False
-        else:
-            st2 = time_hours(st2)
-            en2 = time_hours(en2)
-
-        battery_settings["times"]["enable2"] = True if ch2 == True or ch2 == 1 else False
-        battery_settings["times"]["startTime2"]["hour"] = int(st2)
-        battery_settings["times"]["startTime2"]["minute"] = int(60 * (st2 - int(st2)) + 0.5)
-        battery_settings["times"]["endTime2"]["hour"] = int(en2)
-        battery_settings["times"]["endTime2"]["minute"] = int(60 * (en2 - int(en2)) + 0.5)
-
-    output(f"\nSetting time periods:", 1)
-    output(f"   Time Period 1 = {time_period(battery_settings["times"], 1)}", 1)
-    output(f"   Time Period 2 = {time_period(battery_settings["times"], 2)}", 1)
-    if enable == 0:
-        return battery_settings
-
-    # set charge times
-    body = {"sn": device_sn}
-    for k in ["enable1", "startTime1", "endTime1", "enable2", "startTime2", "endTime2"]:
-        body[k] = battery_settings["times"][k]          # try forcing order of items?
-
-    setting_delay
-    response = signed_post(path="/op/v0/device/battery/forceChargeTime/set", body=body)
-    if response.status_code != 200:
-        output(f"** set_charge() got response code {response.status_code}: {response.reason}")
-        return None
-
-    errno = response.json().get("errno")
-    if errno != 0:
-        if errno == 44096:
-            output(f"** set_charge(), cannot update settings when schedule is active")
-        else:
-            output(f"** set_charge(), {errno_message(response)}")
-
-        return None
-    else:
-        output(f"success", 2)
-
-    return battery_settings
-
-##################################################################################################
 # get min soc settings and save in battery_settings
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_min_error_code = next_foxessapi_counter * 100 + 1
 def get_min():
     global device_sn, battery_settings, debug_setting
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_min_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(get_min_error_code + 10, f"{fn}No devices returned by API")
 
     if battery_settings is None:
         battery_settings = {}
 
-    output(f"getting min soc", 2)
     params = {"sn": device_sn}
     response = signed_get(path="/op/v0/device/battery/soc/get", params=params)
 
-    if response.status_code != 200:
-        output(f"** get_min() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_min(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_min_error_code + 20)
 
     battery_settings["minSoc"] = result.get("minSoc")
     battery_settings["minSocOnGrid"] = result.get("minSocOnGrid")
@@ -1092,45 +1052,57 @@ def get_min():
 # set min soc from battery_settings or parameters
 ##################################################################################################
 
+next_foxessapi_counter += 1
+set_min_error_code = next_foxessapi_counter * 100 + 1
 def set_min(minSocOnGrid = None, minSoc = None, force = 0):
     global device_sn, schedule, battery_settings, debug_setting
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, set_min_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(set_min_error_code + 10, f"{fn}No devices returned by API")
+
     if schedule["enable"] == True:
         if force == 0:
-            output(f"** set_min(): cannot set min SoC mode when a schedule is enabled")
-            return None
+            raise FoxESSAPIError(set_min_error_code + 20, f"{fn}Cannot set min SoC mode when a schedule is enabled")
+
         set_schedule(enable=0)
+
     if battery_settings is None:
         battery_settings = {}
-    if minSocOnGrid is not None:
-        if minSocOnGrid < 0 or minSocOnGrid > 100:
-            output(f"** set_min(): invalid minSocOnGrid = {minSocOnGrid}. Must be between 0 and 100")
-            return None
-        battery_settings["minSocOnGrid"] = minSocOnGrid
+
     if minSoc is not None:
+
         if minSoc < 0 or minSoc > 100:
-            output(f"** set_min(): invalid minSoc = {minSoc}. Must be between 0 and 100")
-            return None
+            raise FoxESSAPIError(set_min_error_code + 30, f"{fn}Invalid minSoc: {minSoc}. Must be between 0 and 100")
+
         battery_settings["minSoc"] = minSoc
+
+    if minSocOnGrid is not None:
+
+        if minSocOnGrid < 0 or minSocOnGrid > 100:
+            raise FoxESSAPIError(set_min_error_code + 40, f"{fn}Invalid minSocOnGrid: {minSocOnGrid}. Must be between 0 and 100")
+
+        battery_settings["minSocOnGrid"] = minSocOnGrid
+
+    if minSocOnGrid < minSoc:
+            raise FoxESSAPIError(set_min_error_code + 50, f"{fn}Invalid minSocOnGrid: {minSocOnGrid}. Must be equal to or above minSoc: {minSoc}")
+
     body = {"sn": device_sn}
     if battery_settings.get("minSocOnGrid") is not None:
         body["minSocOnGrid"] = battery_settings["minSocOnGrid"]
+
     if battery_settings.get("minSoc") is not None:
         body["minSoc"] = battery_settings["minSoc"]
-    output(f"\nSetting minSocOnGrid = {battery_settings.get("minSocOnGrid")}, minSoc = {battery_settings.get("minSoc")}", 1)
+
     setting_delay()
+
     response = signed_post(path="/op/v0/device/battery/soc/set", body=body)
-    if response.status_code != 200:
-        output(f"** set_min() got response code {response.status_code}: {response.reason}")
-        return None
-    errno = response.json().get("errno")
-    if errno != 0:
-        if errno == 44096:
-            output(f"** cannot update settings when schedule is active")
-        else:
-            output(f"** set_min(), {errno_message(response)}")
-        return None
+
+    result = get_result(fn, response, set_min_error_code + 60)
+
     return battery_settings
 
 ##################################################################################################
@@ -1139,21 +1111,27 @@ def set_min(minSocOnGrid = None, minSoc = None, force = 0):
 
 def get_settings():
     global battery_settings
+
     get_charge()
     get_min()
+
     return battery_settings
 
 ##################################################################################################
 # get remote settings
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_remote_settings_error_code = next_foxessapi_counter * 100 + 1
 def get_remote_settings(name):
     global device_sn, debug_setting, messages, name_data, named_settings
 
-    if get_device() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting remote settings", 2)
+    check_for_apikey(fn, get_remote_settings_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_remote_settings_error_code + 10, f"{fn}No devices returned by API")
 
     if name is None:
         return None
@@ -1171,43 +1149,41 @@ def get_remote_settings(name):
 
         return values
 
-    body = {"sn": device_sn, "key": name}
     setting_delay()
+
+    body = {"sn": device_sn, "key": name}
     response = signed_post(path="/op/v0/device/setting/get", body=body)
 
-    if response.status_code != 200:
-        output(f"** get_remote_settings() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        errno = response.json().get("errno")
-        output(f"** get_remote_settings(), no result data for {name}, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_remote_settings_error_code + 20)
 
     named_settings[name] = result
     value = result.get("value")
 
     if value is None:
-        output(f"** get_remote_settings(), no value for {name}")
-        return None
+        raise FoxESSAPIError( + 10, f"{fn}No value for '{name}'")
 
     return value
 
 def get_named_settings(name):
     return get_remote_settings(name)
 
+next_foxessapi_counter += 1
+set_named_settings_error_code = next_foxessapi_counter * 100 + 1
 def set_named_settings(name, value, force=0):
     global device_sn, debug_setting, named_settings
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, set_named_settings_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(set_named_settings_error_code + 10, f"{fn}No devices returned by API")
 
     if force == 1 and get_schedule().get("enable"):
         set_schedule(enable=0)
 
     if type(name) is list:
+
         result = []
 
         for (n, v) in name:
@@ -1216,29 +1192,18 @@ def set_named_settings(name, value, force=0):
         return result
 
     if named_settings.get(name) is None:
+
         result = get_named_settings(name)
 
         if result is None:
             return None
 
-    output(f"\nSetting {name} to {value}", 1)
-    body = {"sn": device_sn, "key": name, "value": f"{value}"}
     setting_delay()
+
+    body = {"sn": device_sn, "key": name, "value": f"{value}"}
     response = signed_post(path="/op/v0/device/setting/set", body=body)
 
-    if response.status_code != 200:
-        output(f"** set_named_settings(): ({name}, {value}) got response code {response.status_code}: {response.reason}")
-        return None
-
-    errno = response.json().get("errno")
-
-    if errno != 0:
-        if errno == 44096:
-            output(f"** cannot update {name} when schedule is active")
-        else:
-            output(f"** set_named_settings(): ({name}, {value}) {errno_message(response)}")
-
-        return None
+    result = get_result(fn, response, set_named_settings_error_code + 20)
 
     named_settings[name]["value"] = f"{value}"
 
@@ -1248,19 +1213,27 @@ def set_named_settings(name, value, force=0):
 # wrappers for named settings
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_work_mode_error_code = next_foxessapi_counter * 100 + 1
 def get_work_mode():
     global work_mode
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_work_mode_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(get_work_mode_error_code + 10, f"{fn}No devices returned by API")
 
     work_mode = get_named_settings("WorkMode")
 
     return work_mode
 
+next_foxessapi_counter += 1
+get_cell_volts_error_code = next_foxessapi_counter * 100 + 1
 def get_cell_volts():
-    print(f"** get_cell_volts(): not available via Open API")
-    return None
+
+    raise FoxESSAPIError(get_cell_volts_error_code, f"{fn}Not available via Open API")
 
     values = get_named_settings("BatteryVolt")
 
@@ -1269,10 +1242,13 @@ def get_cell_volts():
 
     return [v for v in values if v > 0]
 
+next_foxessapi_counter += 1
+get_cell_temps_error_code = next_foxessapi_counter * 100 + 1
 def get_cell_temps(nbat=8):
+
+    raise FoxESSAPIError(get_cell_temps_error_code, f"{fn}Not available via Open API")
+
     global temp_slots_per_battery
-    print(f"** get_cell_temps(): not available via Open API")
-    return None
 
     values = get_named_settings("BatteryTemp")
 
@@ -1301,40 +1277,31 @@ def get_cell_temps(nbat=8):
 # set work mode
 ##################################################################################################
 
+next_foxessapi_counter += 1
+set_work_mode_error_code = next_foxessapi_counter * 100 + 1
 def set_work_mode(mode, force = 0):
     global device_sn, work_modes, work_mode, debug_setting
 
-    if get_device() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-#    if mode not in settable_modes:
-#        output(f"** work mode: must be one of {settable_modes}")
-#        return None
+    check_for_apikey(fn, set_work_mode_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(set_work_mode_error_code + 10, f"{fn}No devices returned by API")
 
     if get_schedule().get("enable"):
+
         if force == 0:
-            output(f"** set_work_mode(): cannot set work mode when a schedule is enabled")
-            return None
+            raise FoxESSAPIError(set_work_mode_error_code + 20, f"{fn}Cannot set work mode when a schedule is enabled")
 
         set_schedule(enable=0)
 
-    output(f"\nSetting work mode: {mode}", 1)
-    body = {"sn": device_sn, "key": "WorkMode", "value": mode}
     setting_delay()
+
+    body = {"sn": device_sn, "key": "WorkMode", "value": mode}
     response = signed_post(path="/op/v0/device/setting/set", body=body)
 
-    if response.status_code != 200:
-        output(f"** set_work_mode() got response code {response.status_code}: {response.reason}")
-        return None
-
-    errno = response.json().get("errno")
-    if errno != 0:
-        if errno == 44096:
-            output(f"** cannot update settings when schedule is active")
-        else:
-            output(f"** set_work_mode(), {errno_message(response)}")
-
-        return None
+    result = get_result(fn, response, set_work_mode_error_code + 30)
 
     work_mode = mode
 
@@ -1346,24 +1313,22 @@ def set_work_mode(mode, force = 0):
 ##################################################################################################
 
 # get the current switch status
+next_foxessapi_counter += 1
+get_flag_error_code = next_foxessapi_counter * 100 + 1
 def get_flag():
     global device_sn, schedule, debug_setting
 
-    if get_device() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
 
-    output(f"getting flag", 2)
+    check_for_apikey(fn, get_flag_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_flag_error_code + 10, f"{fn}No devices returned by API")
+
     body = {"deviceSN": device_sn}
     response = signed_post(path="/op/v1/device/scheduler/get/flag", body=body)
 
-    if response.status_code != 200:
-        output(f"** get_flag() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        return None
+    result = get_result(fn, response, get_flag_error_code + 20)
 
     if schedule is None:
         schedule = {"enable": None, "support": None, "periods": None, "maxsoc": None}
@@ -1381,29 +1346,25 @@ def get_flag():
 ##################################################################################################
 
 # get the current schedule
+next_foxessapi_counter += 1
+get_schedule_error_code = next_foxessapi_counter * 100 + 1
 def get_schedule():
     global device_sn, schedule, debug_setting, work_modes
 
-    if get_flag() is None:
-        return None
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_schedule_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(get_schedule_error_code + 10, f"{fn}No devices returned by API")
 
     if schedule.get("support") == False:
-        output(f"** get_schedule(), not supported on this device")
-        return None
+        raise FoxESSAPIError(get_schedule_error_code + 20, f"{fn}Invalid Value")
 
-    output(f"getting schedule", 2)
     body = {"deviceSN": device_sn}
     response = signed_post(path="/op/v2/device/scheduler/get", body=body)
 
-    if response.status_code != 200:
-        output(f"** get_schedule() got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_schedule(), no result data, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_schedule_error_code + 30)
 
     enable = result["enable"]
     if type(enable) is int:
@@ -1428,50 +1389,53 @@ def get_schedule():
 ##################################################################################################
 
 # set a schedule from a period or list of time segment periods
+next_foxessapi_counter += 1
+set_schedule_error_code = next_foxessapi_counter * 100 + 1
 def set_schedule(periods=None, enable=True):
     global device_sn, debug_setting, schedule, max_periods
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, set_schedule_error_code)
+
+    if get_device() is None:
+        raise FoxESSAPIError(set_schedule_error_code + 10, f"{fn}No devices returned by API")
+
     if get_flag() is None:
         return None
+
     if schedule.get("support") == False:
-        output(f"** set_schedule(), not supported on this device")
-        return None
-    output(f"set_schedule(): enable = {enable}, periods = {periods}", 2)
-    if debug_setting > 2:
-        print(f"** schedule not set (debug_setting={debug_setting})")
-        return None
+        raise FoxESSAPIError(set_schedule_error_code + 20, f"{fn}Not supported on this device")
+
     if type(enable) is int:
         enable = True if enable == 1 else False
-    if enable == False:
-        output(f"\nDisabling schedule", 1)
-    else:
-        output(f"\nEnabling schedule", 1)
+
     if periods is not None:
+
         if type(periods) is not list:
             periods = [periods]
+
         if len(periods) > max_periods:
-            output(f"** set_schedule(): maximum of {max_periods} periods allowed, {len(periods)} provided")
-        body = {"deviceSN": device_sn, "groups": periods[-max_periods:]}
+            raise FoxESSAPIError(set_schedule_error_code + 30, f"{fn}Maximum of {max_periods} periods allowed, {len(periods)} provided")
+
         setting_delay()
+
+        body = {"deviceSN": device_sn, "groups": periods[-max_periods:]}
         response = signed_post(path="/op/v2/device/scheduler/enable", body=body)
-        if response.status_code != 200:
-            output(f"** set_schedule() periods response code {response.status_code}: {response.reason}")
-            return None
-        errno = response.json().get("errno")
-        if errno != 0:
-            output(f"** set_schedule(), enable, {errno_message(response)}")
-            return None
+
+        result = get_result(fn, response,set_schedule_error_code  + 30)
+
         schedule["periods"] = periods
-    body = {"deviceSN": device_sn, "enable": 1 if enable else 0}
+
     setting_delay()
+
+    body = {"deviceSN": device_sn, "enable": 1 if enable else 0}
     response = signed_post(path="/op/v1/device/scheduler/set/flag", body=body)
-    if response.status_code != 200:
-        output(f"** set_schedule() flag response code {response.status_code}: {response.reason}")
-        return None
-    errno = response.json().get("errno")
-    if errno != 0:
-        output(f"** set_schedule(), flag, {errno_message(response)}")
-        return None
+
+    result = get_result(fn, response, set_schedule_error_code + 40)
+
     schedule["enable"] = enable
+
     return schedule
 
 ##################################################################################################
@@ -1479,42 +1443,39 @@ def set_schedule(periods=None, enable=True):
 ##################################################################################################
 
 # get real time data
+next_foxessapi_counter += 1
+get_real_error_code = next_foxessapi_counter * 100 + 1
 def get_real(v = None, sns = None, version = 0):
     global device_sn, debug_setting, device, power_vars, invert_ct2, residual_scale
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_real_error_code)
+
     if sns is None:
+
         if get_device() is None:
-            return None
+            raise FoxESSAPIError(get_real_error_code + 10, f"{fn}No devices returned by API")
 
         if device["status"] > 1:
             status_code = device["status"]
             state = "fault" if status_code == 2 else "off-line" if status_code == 3 else "unknown"
-            output(f"** get_real(): device {device_sn} is not on-line, status = {state} ({device["status"]})")
 
-            return None
+            raise FoxESSAPIError(get_real_error_code + 20, f"{fn}Device {device_sn} is not on-line, status: {state} ({device['status']})")
 
-    output(f"getting real-time data", 2)
     body = {"sns": sns if sns is not None and type(sns) is list else [sns] if sns is not None else [device_sn]}
     if v is not None:
         body["variables"] = v if type(v) is list else [v]
 
     response = signed_post(path="/op/v1/device/real/query", body=body)
-    if response.status_code != 200:
-        output(f"** get_real() got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-
-    if result is None:
-        output(f"** get_real(), no result data, {errno_message(response)}")
-        return None
-
-    if len(result) < 1:
-        return None
+    result = get_result(fn, response, get_real_error_code + 30)
 
     for r in result:
         datas = r["datas"]
+
         for var in datas:
+
             if var.get("variable") == "meterPower2" and invert_ct2 == 1:
                 var["value"] *= -1
             elif var.get("variable") == "ResidualEnergy":
@@ -1537,10 +1498,17 @@ def get_real(v = None, sns = None, version = 0):
 # v = list of variables to get
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_history_error_code = next_foxessapi_counter * 100 + 1
 def get_history(time_span="hour", d=None, v=None):
     global device_sn, debug_setting, var_list, invert_ct2, tariff, max_power_kw, sample_rounding, sample_time, residual_scale, storage
+
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_history_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(get_history_error_code + 10, f"{fn}No devices returned by API")
 
     time_span = time_span.lower()
     if d is None:
@@ -1548,9 +1516,11 @@ def get_history(time_span="hour", d=None, v=None):
 
     if time_span == "week" or type(d) is list:
         days = d if type(d) is list else date_list(e=d, span="week",today=True)
+
         result_list = []
         for day in days:
             result = get_history("day", d=day, v=v)
+
             if result is None:
                 return None
 
@@ -1559,6 +1529,7 @@ def get_history(time_span="hour", d=None, v=None):
         return result_list
 
     if v is None:
+
         if var_list is None:
             var_list = get_vars()
 
@@ -1568,31 +1539,22 @@ def get_history(time_span="hour", d=None, v=None):
 
     for var in v:
         if var not in var_list:
-            output(f"** get_history(): invalid variable '{var}'")
-            output(f"var_list = {var_list}")
-            return None
+            raise FoxESSAPIError(get_history_error_code + 20, f"{fn}Invalid variable '{var}'")
 
-    output(f"getting history data", 2)
     (t_begin, t_end) = query_time(d, time_span)
     if t_begin is None:
         return None
 
     body = {"sn": device_sn, "variables": v, "begin": t_begin, "end": t_end}
     response = signed_post(path="/op/v0/device/history/query", body=body)
-    if response.status_code != 200:
-        output(f"** get_history() got response code {response.status_code}: {response.reason}")
-        return None
 
-    result = response.json().get("result")
-    errno = response.json().get("errno")
-    if errno > 0 or result is None or len(result) == 0:
-        output(f"** get_history(), no data, {errno_message(response)}")
-        return None
-
+    result = get_result(fn, response, get_history_error_code + 30)
     result = result[0].get("datas")
 
     for var in result:
+
         var["date"] = d[0:10]
+
         # remove 1 hour over-run when clocks go forward 1 hour
         while len(var["data"]) > 0 and var["data"][-1]["time"][0:10] != d[0:10]:
             var["data"].pop()
@@ -1600,10 +1562,12 @@ def get_history(time_span="hour", d=None, v=None):
         if var.get("variable") == "meterPower2" and invert_ct2 == 1:
             for y in var["data"]:
                 y["value"] = -y["value"]
+
         elif var["variable"] == "ResidualEnergy":
             var["unit"] = "kWh"
             for y in var["data"]:
                  y["value"] *= residual_scale
+
         elif var.get("unit") is None:
             var["unit"] = ""
 
@@ -1613,56 +1577,43 @@ def get_history(time_span="hour", d=None, v=None):
 def report_value_profile(result):
     if type(result) is not list or result[0]["type"] != "day":
         return (None, None)
+
     data = [(0.0, 0) for h in range(0,24)]
     totals = 0
     n = 0
+
     for day in result:
+
         hours = 0
         value = 0.0
+
         # sum and count available values by hour
         for i in range(0, len(day["values"])):
-            value = day["values"][i] if day["values"][i] is not None else value 
+            value = day["values"][i] if day["values"][i] is not None else value
             data[i] = (data[i][0] + value, data[i][1]+1)
             hours += 1
+
         totals += day["total"] * (24 / hours if hours >= 1 else 1)
         n += 1
+
     daily_average = totals / n if n !=0 else None
+
     # average for each hour
     by_hour = []
     for h in data:
         by_hour.append(h[0] / h[1] if h[1] != 0 else 0.0)   # sum / count
+
     if daily_average is None or daily_average == 0.0:
         return (None, None)
+
     # expand and rescale to match daily_average
     current_total = sum(by_hour)
+
     result = []
     for t in range(0, 24):
         result.append(by_hour[t] * daily_average / current_total if current_total != 0.0 else 0.0)
-    return (daily_average, result)
 
-# rescale history data based on time and steps
-def rescale_history(data, steps):
-    if data is None:
-        return None
-    result = [None for i in range(0, 24 * steps)]
-    bst = 1 if "BST" in data[0]["time"] else 0
-    average = 0.0
-    n = 0
-    i = 0
-    for d in data:
-        h = round_time(time_hours(d["time"][11:]) + bst)
-        new_i = int(h * steps)
-        if new_i != i and i < len(result):
-            result[i] = average / n if n > 0 else None
-            average = 0.0
-            n = 0
-            i = new_i
-        if d["value"] is not None:
-            average += d["value"]
-            n += 1
-    if n > 0 and i < len(result):
-        result[i] = average / n
-    return result
+    return (daily_average, result)
 
 
 ##################################################################################################
@@ -1673,16 +1624,22 @@ def rescale_history(data, steps):
 # v = list of report variables to get
 ##################################################################################################
 
+next_foxessapi_counter += 1
+get_report_error_code = next_foxessapi_counter * 100 + 1
 def get_report(dimension="day", d=None, v=None):
     global device_sn, var_list, debug_setting, report_vars, storage
 
+    fn = inspect.currentframe().f_code.co_name + "(): "
+
+    check_for_apikey(fn, get_report_error_code)
+
     if get_device() is None:
-        return None
+        raise FoxESSAPIError(get_report_error_code + 10, f"{fn}No devices returned by API")
 
     # process list of days
     if d is not None and type(d) is list:
-        result_list = []
 
+        result_list = []
         for day in d:
             result = get_report(dimension, d=day, v=v)
 
@@ -1701,17 +1658,15 @@ def get_report(dimension="day", d=None, v=None):
 
     if v is None:
         v = report_vars
+
     elif type(v) is not list:
         v = [v]
 
     for var in v:
+
         if var not in report_vars:
-            output(f"** get_report(): invalid variable '{var}'")
-            output(f"{report_vars}")
+            raise FoxESSAPIError(get_report_error_code + 10, f"{fn}Invalid variable '{var}'")
 
-            return None
-
-    output(f"getting report data", 2)
     current_date = query_date(None)
     main_date = query_date(d)
     if main_date is None:
@@ -1720,171 +1675,9 @@ def get_report(dimension="day", d=None, v=None):
     body = {"sn": device_sn, "dimension": dimension.replace("week", "month"), "variables": v, "year": main_date["year"], "month": main_date["month"], "day": main_date["day"]}
     response = signed_post(path="/op/v0/device/report/query", body=body)
 
-    if response.status_code != 200:
-        output(f"** get_report() main report got response code {response.status_code}: {response.reason}")
-        return None
-
-    result = response.json().get("result")
-    errno = response.json().get("errno")
-    if errno > 0 or result is None or len(result) == 0:
-        output(f"** get_report(), no report data available, {errno_message(response)}")
-        return None
+    result = get_result(fn, response, get_report_error_code + 20)
 
     return result
-
-##################################################################################################
-##################################################################################################
-# Operations section
-##################################################################################################
-##################################################################################################
-
-##################################################################################################
-# Time and charge period functions
-##################################################################################################
-# times are held either as text HH:MM or HH:MM:SS or as decimal hours e.g. 01.:30 = 1.5
-# decimal hours allows maths operations to be performed simply
-
-# roll over decimal times after maths and round to 1 minute
-def round_time(h):
-    if h is None:
-        return None
-    while h < 0:
-        h += 24
-    while h >= 24:
-        h -= 24
-    return int(h) + int(60 * (h - int(h)) + 0.5) / 60
-
-# split decimal hours into hours and minutes
-def split_hours(h):
-    if h is None:
-        return (None, None)
-    hours = int(h % 24)
-    minutes = int (h % 1 * 60 + 0.5)
-    return (hours, minutes)
-
-# convert time string HH:MM:SS to decimal hours (range 0 to 24)
-# If BST time zone is included, convert to GMT (range -1 to 23)
-def time_hours(t, d = None):
-    if t is None:
-        if d is None:
-            return None
-        t = d
-    if type(t) is float:
-        return t
-    if type(t) is int:
-        return float(t)
-    offset = 1 if "BST" in t else 0
-    t = t[0:8]
-    if type(t) is str and t.replace(":", "").isnumeric() and t.count(":") <= 2:
-        t += ":00" if t.count(":") == 1 else ""
-        return sum(float(t) / x for x, t in zip([1, 60, 3600], t.split(":"))) - offset
-    output(f"** invalid time string {t}")
-    return None
-
-# convert decimal hours to time string HH:MM:SS
-def hours_time(h, ss = False, day = False, mm = True):
-    if h is None:
-        return "None"
-    if type(h) is str:
-        h = time_hours(h)
-    n = 8 if ss else 5 if mm else 2
-    d = 0
-    while h < 0:
-        h += 24
-        d -= 1
-    while h >= 24:
-        h -= 24
-        d += 1
-    suffix = ""
-    if day:
-        suffix = f"/{d:0}"
-    return f"{int(h):02}:{int(h * 60 % 60):02}:{int(h * 3600 % 60):02}"[:n] + suffix
-
-# True if a decimal hour falls within a time period
-def hour_in(h, period):
-    if period is None:
-        return False
-    if type(period) is list:
-        for p in period:
-            if p is not None and hour_in(h, p):
-                return True
-        return False
-    s = period.get("start")
-    e = period.get("end")
-    if s is None or e is None or s == e:
-        return False
-    while h < 0:
-        h += 24
-    while h >= 24:
-        h -= 24
-    if s > e:
-        # e.g. 16:00 - 07:00
-        return h >= s or h < e
-    else:
-        # e.g. 02:00 - 05:00
-        return h >= s and h < e
-
-# True if 2 time periods overlap
-def hour_overlap(period1, period2):
-    if period1 is None or period2 is None:
-        return False
-    if type(period2) is list:
-        for p in period2:
-            if hour_overlap(period1, p):
-                return True
-        return False
-    s1 = period1.get("start")
-    e1 = period1.get("end")
-    if s1 is None or e1 is None or s1 == e1:
-        return False
-    while s1 > e1:
-        s1 -= 24
-    s2 = period2.get("start")
-    e2 = period2.get("end")
-    if s2 is None or e2 is None or s2 == e2:
-        return False
-    while s2 > e2:
-        s2 -= 24
-    if s1 >= s2 and s1 < e2:
-        return True
-    if s2 >= s1 and s2 < e1:
-        return True
-    return False
-
-# Time in a step that falls within a time period
-def duration_in(h, period, steps=1):
-    if period is None:
-        return None
-    interval = 1 / steps
-    duration = interval
-    h_end = h + interval
-    s = period.get("start")
-    e = period.get("end")
-    if s is None or e is None:
-        return None
-    if s == e:
-        return 0.0
-    if e > s and (h >= e or h_end <= s):    # normal time
-            return 0.0
-    if e < s and (h >= e and h_end <= s):   # wrap around time
-            return 0.0
-    if s > h and s < h_end:
-        duration -= (s - h)
-    if e > h and e < h_end:
-        duration -= (h_end - e)
-    duration = interval if duration > interval else 0.0 if duration < 0.0 else duration
-    return round(duration,3)
-
-# Return the hours in a time period with optional value check
-def period_hours(period, check = None, value = 1):
-    if period is None:
-        return 0
-    if check is not None and period[check] != value:
-        return 0
-    return round_time(period["end"] - period["start"])
-
-def format_period(period):
-    return f"{hours_time(period["start"])}-{hours_time(period["end"])}"
 
 ##################################################################################################
 # Battery Info / Battery Monitor
@@ -1892,165 +1685,47 @@ def format_period(period):
 
 # calculate the average of a list of values
 def avg(x):
+
     if len(x) == 0:
         return None
+
     count = 0
     total = 0.0
     for y in x:
+
         if y is not None:
             total += y
             count += 1
+
     return total / count if count > 0 else None
 
 # calculate the % imbalance in a list of values
 def imbalance(v):
+
     if len(v) == 0:
         return None
+
     max_v = max(v)
     min_v = min(v)
+
     return (max_v - min_v) / (max_v + min_v) * 200
 
 # deduce the number of batteries from the number of cells
 def bat_count(cell_count):
     global cells_per_battery
+
     n = None
     for i in cells_per_battery:
+
         if cell_count % i == 0:
             n = i
             break
+
     if n is None:
         return None
+
     return int(cell_count / n + 0.5)
 
-# show information about the current state of the batteries
-def battery_info(log=0, rated=None, count=None, bat=None):
-    global debug_setting, battery_info_app_key
-
-    if bat is None:
-        bats = get_batteries(rated=rated, count=count)
-
-        if bats is None:
-            return None
-
-        for i in range(0, len(bats)):
-            output(f"\n----------------------- BMS {i+1} -----------------------")
-            battery_info(log=log, bat=bats[i])
-
-        return None
-
-    output_spool(battery_info_app_key)
-    nbat = None
-
-    if bat.get("info") is not None:
-        b = bat["info"]
-        output(f"SN {b["masterSN"]}, {b["masterBatType"]}, Version {b["masterVersion"]} (BMS)")
-        nbat = 0
-
-        for s in b["slaveBatteries"]:
-            nbat += 1
-            output(f"SN {s["sn"]}, {s["batType"]}, Version {s["version"]} (Battery {nbat})")
-
-        output()
-
-    rated_capacity = bat.get("ratedCapacity")
-    bat_soh = bat.get("soh")
-    bat_volt = bat["volt"]
-    current_soc = bat["soc"]
-    residual = bat["residual"]
-    bat_current = bat["current"]
-    bat_power = bat["power"]
-    bms_temperature = bat["temperature"]
-    capacity = bat.get("capacity")
-    cell_volts = get_cell_volts()
-
-    if cell_volts is None:
-        output_close()
-        return None
-
-    nv = len(cell_volts)
-
-    if nbat is None:
-        nbat = bat_count(nv) if bat.get("count") is None else bat["count"]
-
-    if nbat is None:
-        output(f"** battery_info(): unable to match cells_per_battery for {nv}")
-        output_close()
-        return None
-
-    nv_cell = int(nv / nbat + 0.5)
-    bat_cell_temps = get_cell_temps(nbat)
-
-    if bat_cell_temps is None:
-        output_close()
-        return None
-
-    bat_cell_volts = []
-    bat_volts = []
-    bat_temps = []
-    cell_temps = []
-
-    for i in range(0, nbat):
-        bat_cell_volts.append(cell_volts[i * nv_cell : (i + 1) * nv_cell])
-        bat_volts.append(sum(bat_cell_volts[i]))
-        bat_temps.append(avg(bat_cell_temps[i]))
-
-        for t in bat_cell_temps[i]:
-            cell_temps.append(t)
-
-    if log > 0:
-        now = datetime.now()
-        s = datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S")
-        s += f",{current_soc},{residual},{bat_volt},{bat_current},{bms_temperature},{nbat},{nv_cell}"
-
-        for i in range(0, nbat):
-            s +=f",{bat_volts[i]:.2f}"
-
-        for i in range(0, nbat):
-            s +=f",{imbalance(bat_cell_volts[i]):.2f}"
-
-        for i in range(0, nbat):
-            s +=f",{bat_temps[i]:.1f}"
-
-        if log >= 2:
-            for v in cell_volts:
-                s +=f",{v:.3f}"
-
-            if log >= 3:
-                for v in cell_temps:
-                    s +=f",{v:.0f}"
-
-        return s
-
-    output(f"Current SoC:         {current_soc}%")
-
-    if capacity is not None:
-        output(f"Capacity:            {capacity:.2f}kWh" + (" (calculated)" if bat["residual_handling"] in [1,3] else ""))
-
-    output(f"Residual:            {residual:.2f}kWh" + (" (calculated)" if bat["residual_handling"] in [2,3] else ""))
-
-    if rated_capacity is not None and bat_soh is not None:
-        output(f"Rated Capacity:      {rated_capacity / 1000:.2f}kWh")
-        output(f"SoH:                 {bat_soh:.1f}%" + (" (Capacity / Rated Capacity x 100)" if not bat["soh_supported"] else ""))
-
-    output(f"InvBatVolt:          {bat_volt:.1f}V")
-    output(f"InvBatCurrent:       {bat_current:.1f}A")
-    output(f"State:               {"Charging" if bat_power < 0 else "Discharging"} ({abs(bat_power):.3f}kW)")
-    output(f"Battery Count:       {nbat} batteries with {nv_cell} cells each")
-    output(f"Battery Volts:       {sum(bat_volts):.1f}V total, {avg(bat_volts):.2f}V average, {max(bat_volts):.2f}V maximum, {min(bat_volts):.2f}V minimum")
-    output(f"Cell Volts:          {avg(cell_volts):.3f}V average, {max(cell_volts):.3f}V maximum, {min(cell_volts):.3f}V minimum")
-    output(f"Cell Imbalance:      {imbalance(cell_volts):.2f}%:")
-    output(f"BMS Temperature:     {bms_temperature:.1f}°C")
-
-    if bat.get("charge_rate") is not None:
-        output(f"BMS Charge Rate:     {bat["charge_rate"]:.1f}A (estimated)")
-
-    output(f"Battery Temperature: {avg(cell_temps):.1f}°C average, {max(cell_temps):.1f}°C maximum, {min(cell_temps):.1f}°C minimum")
-    output(f"\nInfo by battery:")
-
-    for i in range(0, nbat):
-        output(f"  Battery {i+1}: {bat_volts[i]:.2f}V, Cell Imbalance = {imbalance(bat_cell_volts[i]):.2f}%, Average Cell Temperature = {bat_temps[i]:.1f}°C")
-
-    return None
 
 ##################################################################################################
 # Date Ranges
@@ -2068,6 +1743,7 @@ def date_list(s = None, e = None, limit = None, span = None, today = 0, quiet = 
 
     latest_date = datetime.date(datetime.now())
     today = 0 if today == False else 1 if today == True else today
+
     if today == 0:
         latest_date -= timedelta(days=1)
 
@@ -2080,44 +1756,57 @@ def date_list(s = None, e = None, limit = None, span = None, today = 0, quiet = 
         last = latest_date
 
     if span is not None:
+
         span = span.lower()
         limit = 366 if limit is None else limit
+
         if span == "day":
             limit = 1
+
         elif span == "2days":
             # e.g. yesterday and today
             last = first + timedelta(days=1) if first is not None else last
             first = last - timedelta(days=1) if first is None else first
+
         elif span == "weekday":
             # e.g. last 8 days with same day of the week
             last = first + timedelta(days=49) if first is not None else last
             first = last - timedelta(days=49) if first is None else first
             step = 7
+
         elif span == "week":
             # number of days in a week less 1 day
             last = first + timedelta(days=6) if first is not None else last
             first = last - timedelta(days=6) if first is None else first
+
         elif span == "month":
+
             if first is not None:
                 # number of days in this month less 1 day
                 days = ((first.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day - 1
+
             else:
                 # number of days in previous month less 1 day
                 days = (last.replace(day=1) - timedelta(days=1)).day - 1
             last = first + timedelta(days=days) if first is not None else last
             first = last - timedelta(days=days) if first is None else first
+
         elif span == "year":
+
             if first is not None:
                 # number of days in coming year
                 days = (first.replace(year=first.year+1,day=28 if first.month==2 and first.day==29 else first.day) - first).days - 1
+
             else:
                 # number of days in previous year
                 days = (last - last.replace(year=last.year-1,day=28 if last.month==2 and last.day==29 else last.day)).days - 1
+
             last = first + timedelta(days=days) if first is not None else last
             first = last - timedelta(days=days) if first is None else first
+
         else:
-            output(f"** span '{span}' was not recognised")
             return None
+
     else:
         limit = 200 if limit is None or limit < 1 else limit
 
@@ -2132,13 +1821,3 @@ def date_list(s = None, e = None, limit = None, span = None, today = 0, quiet = 
         l.append(datetime.strftime(d, "%Y-%m-%d"))
 
     return l
-
-# add to spooled_output
-def output(s="", log_level=None):
-    global spool_mode, spooled_output, debug_setting
-
-    if log_level is not None and debug_setting < log_level:
-        return
-
-    # keep output stream up to date in case of problem / exception
-    print(s)

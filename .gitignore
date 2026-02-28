@@ -204,3 +204,4 @@ cython_debug/
 # Additional files to ignore
 cache/
 *.swp
+*.pkl

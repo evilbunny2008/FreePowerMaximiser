@@ -43,6 +43,15 @@ min_grid_export_kWhr = 1
 
 today = date.today()
 
+def save_cache_objects():
+    """ Cache API obbjects before exiting """
+
+    print(f"Saving cached objects...")
+
+    openapi.save_cache_objects()
+
+    print(f"Done!")
+
 def should_download_now(schedule_time, filename):
     """
     Check if we should download for this scheduled time.
@@ -891,6 +900,8 @@ def main():
 
     elif DEBUG >= 1:
         print("The new periods match the old periods... skipping uploading new periods...")
+
+    save_cache_objects()
 
 if __name__ == "__main__":
 

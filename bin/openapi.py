@@ -35,10 +35,12 @@ import hashlib
 import inspect
 import json
 import os.path
+import pickle
 import requests
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pprint import pprint
 from requests.auth import HTTPBasicAuth
 
 fox_domain = "https://www.foxesscloud.com"
@@ -66,7 +68,7 @@ invert_ct2 = 1
 logger_list = None
 logger = None
 logger_sn = None
-max_periods = 8
+max_periods = 100
 messages = None
 name_list = ["ExportLimit", "MinSoc", "MinSocOnGrid", "MaxSoc", "GridCode", "WorkMode", "ExportLimitPower", "EpsOutPut", "MaxSetChargeCurrent",
              "MaxSetDischargeCurrent", "ECOMode", "Meter1Enable", "Meter2Enable", "SysSwitch", "GroundProtection"]
@@ -77,8 +79,6 @@ report_vars = ["generation", "feedin", "loads", "gridConsumption", "chargeEnergy
 report_names = ["Generation", "Grid Export", "Consumption", "Grid Import", "Battery Charge", "Battery Discharge", "PV Yield"]
 residual_handling = 0
 residual_scale = 1
-sample_time = 5.0
-sample_rounding = 2
 schedule = None
 site_list = None
 site = None
@@ -89,7 +89,45 @@ var_list = None
 work_mode = None
 work_modes = ["SelfUse", "Feedin", "Backup", "ForceCharge", "ForceDischarge"]
 
-settable_modes = work_modes[:3]
+# Cached file names
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+cache_dir = os.path.join(parent_dir, "cache")
+os.makedirs(cache_dir, exist_ok=True)
+CACHE_FILE = os.path.join(cache_dir, "foxess_objects.pkl")
+
+# load on start
+data = None
+if os.path.exists(CACHE_FILE):
+
+    print("Loading cached objects...")
+
+    try:
+        with open(CACHE_FILE, "rb") as f:
+            data = pickle.load(f)
+    except Exception as e:
+        data = None
+
+    print("Done loading...")
+
+if data is not None:
+
+    print("Reading cached objects...")
+
+    batteries = data.get("batteries", batteries)
+    battery = data.get("battery", battery)
+    device_list = data.get("device_list", device_list)
+    device = data.get("device", device)
+    device_sn = data.get("device_sn", device_sn)
+    logger_list = data.get("logger_list", logger_list)
+    logger = data.get("logger", logger)
+    logger_sn = data.get("logger_sn", logger_sn)
+    messages = data.get("messages", messages)
+    site_list = data.get("site_list", site_list)
+    site = data.get("site", site)
+    station_id = data.get("station_id", station_id)
+
+    print("Done reading...")
 
 # charge rates based on residual_handling. Index is bms temperature
 
@@ -162,6 +200,31 @@ class MockResponse:
 ##################################################################################################
 # check for returned data, no results and apikey
 ##################################################################################################
+
+def save_cache_objects():
+
+    data = {}
+
+    data["batteries"] = batteries
+    data["battery"] = battery
+    data["device_list"] = device_list
+    data["device"] = device
+    data["device_sn"] = device_sn
+    data["logger_list"] = logger_list
+    data["logger"] = logger
+    data["logger_sn"] = logger_sn
+    data["messages"] = messages
+    data["site_list"] = site_list
+    data["site"] = site
+    data["station_id"] = station_id
+    data["var_table"] = var_table
+    data["var_list"] = var_list
+    data["work_mode"] = work_mode
+
+    print("Saving data:")
+
+    with open(CACHE_FILE, "wb") as f:
+        pickle.dump(data, f)
 
 def check_for_apikey(fn, error_code):
 
@@ -1229,7 +1292,7 @@ def get_schedule():
     if get_device() is None:
         raise FoxESSAPIError(get_schedule_error_code + 10, f"{fn}No devices returned by API")
 
-    if schedule.get("support") == False:
+    if schedule is not None and schedule.get("support") == False:
         raise FoxESSAPIError(get_schedule_error_code + 20, f"{fn}Invalid Value")
 
     body = {"deviceSN": device_sn}
@@ -1240,6 +1303,9 @@ def get_schedule():
     enable = result["enable"]
     if type(enable) is int:
         enable = True if enable == 1 else False
+
+    if schedule is None:
+        schedule = {}
 
     schedule["enable"] = enable
     schedule["periods"] = []
@@ -1370,7 +1436,7 @@ def get_real(v = None, sns = None, version = 0):
 next_foxessapi_counter += 1
 get_history_error_code = next_foxessapi_counter * 100 + 1
 def get_history(time_span="hour", d=None, v=None):
-    global device_sn, debug_setting, var_list, invert_ct2, tariff, max_power_kw, sample_rounding, sample_time, residual_scale, storage
+    global device_sn, debug_setting, var_list, invert_ct2, tariff, max_power_kw, residual_scale, storage
 
     fn = inspect.currentframe().f_code.co_name + "(): "
 

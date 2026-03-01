@@ -202,7 +202,11 @@ def day_name(days_ahead):
     target = datetime.now(LOCAL_TZ) + timedelta(days=days_ahead)
     return target.strftime("%A")  # e.g. "Monday"
 
-def generate_periods(now, charge_rate, discharge_rate):
+def generate_periods(now, charge_rate, discharge_amount):
+
+    periods = []
+
+    discharge_amount = int(discharge_amount)
 
     fdPwr = int(be_max_rate_kW * 1500)
 
@@ -212,113 +216,191 @@ def generate_periods(now, charge_rate, discharge_rate):
     if charge_rate > fdPwr:
         charge_rate = fdPwr
 
-    if discharge_rate < 0:
-        discharge_rate = 0
+    if discharge_amount < 0:
+        discharge_amount = 0
 
-    if discharge_rate > fdPwr:
-        discharge_rate = fdPwr
+    periods.extend([{"enable": 1,
+                     "startHour": 0,
+                     "startMinute": 0,
+                     "endHour": fp_start.hour,
+                     "endMinute": 1,
+                     "extraParam": {"exportLimit": 100000,
+                                    "fdPwr": fdPwr,
+                                    "fdSoc": battery_min_grid_percent,
+                                    "importLimit": 100000,
+                                    "maxSoc": 100,
+                                    "minSocOnGrid": battery_min_grid_percent,
+                                    "pvLimit": 20000,
+                                    "reactivePower": 0},
+                     "workMode": "SelfUse"}])
 
-    period1 = {"enable": 1,
-              "startHour": 0,
-              "startMinute": 0,
-              "endHour": fp_start.hour,
-              "endMinute": 1,
-              "extraParam": {"exportLimit": 100000,
-                             "fdPwr": fdPwr,
-                             "fdSoc": battery_min_grid_percent,
-                             "importLimit": 100000,
-                             "maxSoc": 100,
-                             "minSocOnGrid": battery_min_grid_percent,
-                             "pvLimit": 20000,
-                             "reactivePower": 0},
-              "workMode": "SelfUse"}
+    periods.extend([{"enable": 1,
+                     "startHour": fp_start.hour,
+                     "startMinute": 1,
+                     "endHour": (fp_end.hour - 1),
+                     "endMinute": 58,
+                     "extraParam": {"exportLimit": 100000,
+                                    "fdPwr": charge_rate,
+                                    "fdSoc": battery_target_percent,
+                                    "importLimit": 100000,
+                                    "maxSoc": battery_target_percent,
+                                    "minSocOnGrid": battery_min_grid_percent,
+                                    "pvLimit": 20000,
+                                    "reactivePower": 0},
+                     "workMode": "ForceCharge"}])
 
-    period2 = {"enable": 1,
-              "startHour": fp_start.hour,
-              "startMinute": 1,
-              "endHour": (fp_end.hour - 1),
-              "endMinute": 58,
-              "extraParam": {"exportLimit": 100000,
-                             "fdPwr": charge_rate,
-                             "fdSoc": battery_target_percent,
-                             "importLimit": 100000,
-                             "maxSoc": battery_target_percent,
-                             "minSocOnGrid": battery_min_grid_percent,
-                             "pvLimit": 20000,
-                             "reactivePower": 0},
-              "workMode": "ForceCharge"}
+    if discharge_amount <= 0 or be_start is None or be_end is None:
 
-    if discharge_rate > 0:
+        periods.extend([{"enable": 1,
+                         "startHour": (fp_end_hour - 1),
+                         "startMinute": 58,
+                         "endHour": 23,
+                         "endMinute": 59,
+                         "extraParam": {"exportLimit": 100000,
+                                        "fdPwr": fdPwr,
+                                        "fdSoc": battery_min_grid_percent,
+                                        "importLimit": 100000,
+                                        "maxSoc": 100,
+                                        "minSocOnGrid": battery_min_grid_percent,
+                                        "pvLimit": 20000,
+                                        "reactivePower": 0},
+                         "workMode": "SelfUse"}])
 
-        if DEBUG >= 3:
-            print(f"be_start.hour: {be_start.hour}")
-            print(f"be_start.minute: {be_start.minute}")
-            print(f"be_end.hour: {be_end.hour}")
-            print(f"be_end.minute: {be_end.minute}")
+        return periods
 
-        period3 = {"enable": 1,
-              "startHour": (fp_end_hour - 1),
-              "startMinute": 58,
-              "endHour": be_start.hour,
-              "endMinute": be_start.minute,
-              "extraParam": {"exportLimit": 100000,
-                             "fdPwr": fdPwr,
-                             "fdSoc": battery_min_grid_percent,
-                             "importLimit": 100000,
-                             "maxSoc": 100,
-                             "minSocOnGrid": battery_min_grid_percent,
-                             "pvLimit": 20000,
-                             "reactivePower": 0},
-              "workMode": "SelfUse"}
+    start_time = be_start + timedelta(minutes=-1)
+    if start_time < now:
+        start_time = now
 
-        period4 = {"enable": 1,
-              "startHour": be_start.hour,
-              "startMinute": be_start.minute,
-              "endHour": be_end.hour,
-              "endMinute": be_end.minute,
-              "extraParam": {"exportLimit": 100000,
-                  "fdPwr": discharge_rate,
-                  "fdSoc": battery_min_grid_percent,
-                  "importLimit": 100000,
-                  "maxSoc": 100,
-                  "minSocOnGrid": battery_min_grid_percent,
-                  "pvLimit": 20000,
-                  "reactivePower": 0},
-              "workMode": "ForceDischarge"}
+    be_end_time = be_end + timedelta(minutes=1)
 
-        period5 = {"enable": 1,
-              "startHour": be_end.hour,
-              "startMinute": be_end.minute,
-              "endHour": 23,
-              "endMinute": 59,
-              "extraParam": {"exportLimit": 100000,
-                             "fdPwr": fdPwr,
-                             "fdSoc": battery_min_grid_percent,
-                             "importLimit": 100000,
-                             "maxSoc": 100,
-                             "minSocOnGrid": battery_min_grid_percent,
-                             "pvLimit": 20000,
-                             "reactivePower": 0},
-              "workMode": "SelfUse"}
+    max_time = (be_end_time - start_time).total_seconds() / 3600
+    max_amount = int(be_max_rate_kW * 1000 * max_time)
 
-        return [period1, period2, period3, period4, period5]
+    extra_discharge_amount = 0
+    if discharge_amount > max_amount:
+        extra_discharge_amount = discharge_amount - max_amount
+        discharge_amount = max_amount
 
-    period3 = {"enable": 1,
-              "startHour": (fp_end_hour - 1),
-              "startMinute": 58,
-              "endHour": 23,
-              "endMinute": 59,
-              "extraParam": {"exportLimit": 100000,
-                             "fdPwr": fdPwr,
-                             "fdSoc": battery_min_grid_percent,
-                             "importLimit": 100000,
-                             "maxSoc": 100,
-                             "minSocOnGrid": battery_min_grid_percent,
-                             "pvLimit": 20000,
-                             "reactivePower": 0},
-              "workMode": "SelfUse"}
+    discharge_rate = int(discharge_amount / max_time)
 
-    return [period1, period2, period3]
+    if DEBUG >= 3:
+        print(f"start_time.hour: {start_time.hour}")
+        print(f"start_time.minute: {start_time.minute}")
+        print(f"be_end.hour: {be_end.hour}")
+        print(f"be_end.minute: {be_end.minute}")
+
+    periods.extend([{"enable": 1,
+                     "startHour": (fp_end_hour - 1),
+                     "startMinute": 58,
+                     "endHour": start_time.hour,
+                     "endMinute": start_time.minute,
+                     "extraParam": {"exportLimit": 100000,
+                                    "fdPwr": fdPwr,
+                                    "fdSoc": battery_min_grid_percent,
+                                    "importLimit": 100000,
+                                    "maxSoc": 100,
+                                    "minSocOnGrid": battery_min_grid_percent,
+                                    "pvLimit": 20000,
+                                    "reactivePower": 0},
+                     "workMode": "SelfUse"}])
+
+    periods.extend([{"enable": 1,
+                     "startHour": start_time.hour,
+                     "startMinute": start_time.minute,
+                     "endHour": be_end_time.hour,
+                     "endMinute": be_end_time.minute,
+                     "extraParam": {"exportLimit": 100000,
+                         "fdPwr": discharge_rate,
+                         "fdSoc": battery_min_grid_percent,
+                         "importLimit": 100000,
+                         "maxSoc": 100,
+                         "minSocOnGrid": battery_min_grid_percent,
+                         "pvLimit": 20000,
+                         "reactivePower": 0},
+                     "workMode": "ForceDischarge"}])
+
+    if extra_discharge_amount <= 0 or nbe_start is None or nbe_end is None:
+
+        periods.extend([{"enable": 1,
+                         "startHour": be_end_time.hour,
+                         "startMinute": be_end_time.minute,
+                         "endHour": 23,
+                         "endMinute": 59,
+                         "extraParam": {"exportLimit": 100000,
+                                        "fdPwr": fdPwr,
+                                        "fdSoc": battery_min_grid_percent,
+                                        "importLimit": 100000,
+                                        "maxSoc": 100,
+                                        "minSocOnGrid": battery_min_grid_percent,
+                                        "pvLimit": 20000,
+                                        "reactivePower": 0},
+                         "workMode": "SelfUse"}])
+
+        return periods
+
+    start_time = nbe_start
+
+    if start_time < be_end_time:
+        start_time = be_end_time
+
+    if start_time < now:
+        start_time = now
+
+    hours = extra_discharge_amount / be_max_rate_kW
+
+    end_time = start_time + timedelta(hours=hours)
+    if end_time > nbe_end:
+        end_time = nbe_end
+
+    if be_end.hour != start_time.hour or be_end.minute != start_time.minute:
+
+        periods.extend([{"enable": 1,
+                         "startHour": be_end_time.hour,
+                         "startMinute": be_end_time.minute,
+                         "endHour": start_time.hour,
+                         "endMinute": start_time.minute,
+                         "extraParam": {"exportLimit": 100000,
+                                        "fdPwr": fdPwr,
+                                        "fdSoc": battery_min_grid_percent,
+                                        "importLimit": 100000,
+                                        "maxSoc": 100,
+                                        "minSocOnGrid": battery_min_grid_percent,
+                                        "pvLimit": 20000,
+                                        "reactivePower": 0},
+                         "workMode": "SelfUse"}])
+
+    periods.extend([{"enable": 1,
+                     "startHour": start_time.hour,
+                     "startMinute": start_time.minute,
+                     "endHour": end_time.hour,
+                     "endMinute": end_time.minute,
+                     "extraParam": {"exportLimit": 100000,
+                                    "fdPwr": be_max_rate_kW * 1000,
+                                    "fdSoc": battery_min_grid_percent,
+                                    "importLimit": 100000,
+                                    "maxSoc": 100,
+                                    "minSocOnGrid": battery_min_grid_percent,
+                                    "pvLimit": 20000,
+                                    "reactivePower": 0},
+                     "workMode": "ForceDischarge"}])
+
+    periods.extend([{"enable": 1,
+                     "startHour": end_time.hour,
+                     "startMinute": end_time.minute,
+                     "endHour": 23,
+                     "endMinute": 59,
+                     "extraParam": {"exportLimit": 100000,
+                                    "fdPwr": fdPwr,
+                                    "fdSoc": battery_min_grid_percent,
+                                    "importLimit": 100000,
+                                    "maxSoc": 100,
+                                    "minSocOnGrid": battery_min_grid_percent,
+                                    "pvLimit": 20000,
+                                    "reactivePower": 0},
+                     "workMode": "SelfUse"}])
+
+    return periods
 
 def compare_period(old_period, new_period):
     """Compare Fox ESS configurations and report changes."""
@@ -772,10 +854,16 @@ def main():
 
         left_in_battery_kWhrs1 = curr_kWhr + est_kWhrs1
 
+        if left_in_battery_kWhrs1 > max_batt_kWhr:
+             left_in_battery_kWhrs1 = max_batt_kWhr
+
         if DEBUG >= 1:
             print(f"Solcast predicts left_in_battery_kWhrs1 at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs1:.2f}kWhrs")
 
         left_in_battery_kWhrs2 = curr_kWhr + est_kWhrs2
+
+        if left_in_battery_kWhrs2 > max_batt_kWhr:
+             left_in_battery_kWhrs2 = max_batt_kWhr
 
         if DEBUG >= 1:
             print(f"Forecast.solar predicts left_in_battery_kWhrs2 at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs2:.2f}kWhrs")
@@ -897,20 +985,51 @@ def main():
     if discharge_rate < be_min_rate_kW * 1000:
         discharge_rate = 0
 
-    discharge_rate = int(discharge_rate)
+    discharge_amount = excess_kWhrs * 1000
 
-    print(f"Setting {fp_start.hour}am to {(fp_end_hour - 12)}pm charge rate at {charge_rate} watts and setting the {(be_start_hour - 12)}pm to {(be_end.hour - 12)}pm discharge rate at {discharge_rate} watts...")
-
+    first_amount = discharge_amount
+    second_amount = 0
+    line1 = line2 = None
     if discharge_rate > 0:
-        earn = discharge_rate / 1000 * be_fit * export_hrs
 
-        if DEBUG >= 1:
-            print(f"You will earn up to ${earn:.2f} exporting between {(be_start_hour - 12)}pm and {(be_end.hour - 12)}pm")
+        if first_amount > be_max_rate_kW * 1000 * export_hrs:
+            first_amount = be_max_rate_kW * 1000 * export_hrs
+            second_amount = discharge_amount - first_amount
+
+        earn1 = first_amount / 1000 * be_fit
+
+        line1 = f"You will earn up to ${earn1:.2f} exporting between {(be_start_hour - 12)}pm and {(be_end.hour - 12)}pm"
+
+        if second_amount > 0:
+
+            max_nbe_time = (nbe_end - nbe_start).total_seconds() / 3600
+            max_nbe_amount = nbe_max_rate_kW * 1000 * max_nbe_time
+
+            extra_Whrs = second_amount
+            if extra_Whrs > max_nbe_amount:
+                extra_Whrs = max_nbe_amount
+
+            earn2 = extra_Whrs / 1000 * nbe_fit
+
+            line2 = f"You will earn up to ${earn2:.2f} exporting between {(nbe_start_hour - 12)}pm and {(nbe_end.hour - 12)}pm"
+
+    print(f"Setting {fp_start.hour}am to {(fp_end_hour - 12)}pm charge rate at {charge_rate} watts and setting the {(be_start_hour - 12)}pm to {(be_end.hour - 12)}pm discharge for {(discharge_amount / 1000):.2f}kWhrs")
 
     if DEBUG >= 1:
+
+        if line1 is not None:
+            print(line1)
+
+        if line2 is not None:
+            print(line2)
+
         print()
 
-    new_periods = generate_periods(now, charge_rate, discharge_rate)
+    new_periods = generate_periods(now, charge_rate, discharge_amount)
+
+    pprint(new_periods)
+
+    sys.exit()
 
     curr_periods = openapi.get_schedule()["periods"]
 
@@ -1014,27 +1133,57 @@ if __name__ == "__main__":
         print(f"You set the free power start hour to equal or be greater than the free power end hour.")
         sys.exit()
 
-    be_start_hour = configParser.getint("BestExportTime", "start_hour", fallback = 18)
-    be_end_hour = configParser.getint("BestExportTime", "end_hour", fallback = 20)
+    be_start_hour = configParser.getint("BestExportTime", "start_hour", fallback = None)
+    be_end_hour = configParser.getint("BestExportTime", "end_hour", fallback = None)
     be_max_rate_kW = configParser.getfloat("BestExportTime", "max_rate_kW", fallback = 5)
     be_min_rate_kW = configParser.getfloat("BestExportTime", "min_rate_kW", fallback = 3)
     be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
 
-    if be_start_hour < 0:
-        print(f"You set the best export time start hour less than 0 or midnight.")
-        sys.exit()
+    if be_start_hour is not None and be_end_hour is not None:
 
-    if be_end_hour > 23:
-        print(f"You set the best export time end hour greater than 23 or after 11pm.")
-        sys.exit()
+        if be_start_hour < 0:
+            print(f"You set the best export time start hour less than 0 or midnight.")
+            sys.exit()
 
-    if be_start_hour >= be_end_hour:
-        print(f"You set the best export time start hour to equal or be greater than the best export time end hour.")
-        sys.exit()
+        if be_end_hour > 23:
+            print(f"You set the best export time end hour greater than 23 or after 11pm.")
+            sys.exit()
 
-    if not (be_end_hour <= fp_start_hour or fp_end_hour <= be_start_hour):
-        print(f"You set the best export time to overlap with the free power time.")
-        sys.exit()
+        if be_start_hour >= be_end_hour:
+            print(f"You set the best export time start hour to equal or be greater than the best export time end hour.")
+            sys.exit()
+
+        if not (be_end_hour <= fp_start_hour or fp_end_hour <= be_start_hour):
+            print(f"You set the best export time to overlap with the free power time.")
+            sys.exit()
+
+    nbe_start_hour = configParser.getint("NextBestExportTime", "start_hour", fallback = None)
+    nbe_end_hour = configParser.getint("NextBestExportTime", "end_hour", fallback = None)
+    nbe_max_rate_kW = configParser.getfloat("NextBestExportTime", "max_rate_kW", fallback = 5)
+    nbe_min_rate_kW = configParser.getfloat("NextBestExportTime", "min_rate_kW", fallback = 3)
+    nbe_fit = configParser.getfloat("NextBestExportTime", "fit_rate", fallback = 0.06)
+
+    if nbe_start_hour is not None and nbe_end_hour is not None:
+
+        if nbe_start_hour < 0:
+            print(f"You set the next best export time start hour less than 0 or midnight.")
+            sys.exit()
+
+        if nbe_end_hour > 23:
+            print(f"You set the next best export time end hour greater than 23 or after 11pm.")
+            sys.exit()
+
+        if nbe_start_hour >= nbe_end_hour:
+            print(f"You set the next best export time start hour to equal or be greater than the next best export time end hour.")
+            sys.exit()
+
+        if not (nbe_end_hour <= fp_start_hour or fp_end_hour <= nbe_start_hour):
+            print(f"You set the next best export time to overlap with the free power time.")
+            sys.exit()
+
+        if be_end_hour is not None and be_end_hour > nbe_start_hour:
+                print(f"You set the best export time to overlap with the next best time.")
+                sys.exit()
 
     BOM_geohash = None
     if -44 < lat < -10 and 113 < lon < 154:
@@ -1054,8 +1203,15 @@ if __name__ == "__main__":
     fp_start = datetime.combine(now.date(), time(fp_start_hour), tzinfo=LOCAL_TZ)
     fp_end = datetime.combine(now.date(), time(fp_end_hour), tzinfo=LOCAL_TZ)
 
-    be_start = datetime.combine(now.date(), time(be_start_hour), tzinfo=LOCAL_TZ)
-    be_end = datetime.combine(now.date(), time(be_end_hour), tzinfo=LOCAL_TZ)
+    be_start = be_end = None
+    if be_start_hour is not None and be_end_hour is not None:
+        be_start = datetime.combine(now.date(), time(be_start_hour), tzinfo=LOCAL_TZ)
+        be_end = datetime.combine(now.date(), time(be_end_hour), tzinfo=LOCAL_TZ)
+
+    nbe_start = nbe_end = None
+    if nbe_start_hour is not None and nbe_end_hour is not None:
+        nbe_start = datetime.combine(now.date(), time(nbe_start_hour), tzinfo=LOCAL_TZ)
+        nbe_end = datetime.combine(now.date(), time(nbe_end_hour), tzinfo=LOCAL_TZ)
 
     observer = Observer(latitude=lat, longitude=lon)
 
@@ -1077,7 +1233,7 @@ if __name__ == "__main__":
         datetime.combine(now.date(), time(13, 30), tzinfo=LOCAL_TZ),
     ]
 
-    if solar_dropoff < be_start:
+    if be_start is None or solar_dropoff < be_start:
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(12, 30), tzinfo=LOCAL_TZ)])
     else:
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(18, 0), tzinfo=LOCAL_TZ)])

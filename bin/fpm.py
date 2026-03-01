@@ -1027,9 +1027,9 @@ def main():
 
     new_periods = generate_periods(now, charge_rate, discharge_amount)
 
-    pprint(new_periods)
+    #pprint(new_periods)
 
-    sys.exit()
+    #sys.exit()
 
     curr_periods = openapi.get_schedule()["periods"]
 

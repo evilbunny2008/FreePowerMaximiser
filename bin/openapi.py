@@ -37,6 +37,7 @@ import json
 import os.path
 import pickle
 import requests
+import sys
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -197,6 +198,8 @@ def load_cache_objects():
         site = data.get("site", site)
         station_id = data.get("station_id", station_id)
 
+next_foxessapi_counter += 1
+save_cache_objects_error_code = next_foxessapi_counter * 100 + 1
 def save_cache_objects():
 
     data = {}
@@ -217,8 +220,11 @@ def save_cache_objects():
     data["var_list"] = var_list
     data["work_mode"] = work_mode
 
-    with open(CACHE_FILE, "wb") as f:
-        pickle.dump(data, f)
+    try:
+        with open(CACHE_FILE, "wb") as f:
+            pickle.dump(data, f)
+    except Exception as e:
+        raise FoxESSAPIError(save_cache_objects_error_code, f"{fn}Error writting pickle cache file '{CACHE_FILE}', e: {str(e)}")
 
 def check_for_apikey(fn, error_code):
 
@@ -1290,6 +1296,7 @@ def get_schedule():
         raise FoxESSAPIError(get_schedule_error_code + 20, f"{fn}Invalid Value")
 
     body = {"deviceSN": device_sn}
+
     response = signed_post(path="/op/v2/device/scheduler/get", body=body)
 
     result = get_result(fn, response, get_schedule_error_code + 30)
@@ -1307,7 +1314,11 @@ def get_schedule():
 
     # remove invalid work mode from periods
     for g in result["groups"]:
-        if g["enable"] == 1 and g["workMode"] in work_modes:
+
+        if g["enable"] == 1 and g["workMode"] not in work_modes:
+            raise FoxESSAPIError(get_schedule_error_code + 20, f"{fn}Invalid work mode '{g['workMode']}'")
+
+        if g["enable"] == 1:
             schedule["periods"].append(g)
 
             if g.get("extraParam") is not None and g["extraParam"].get("maxSoc") is not None:
@@ -1349,7 +1360,7 @@ def set_schedule(periods=None, enable=True):
         if len(periods) > max_periods:
             raise FoxESSAPIError(set_schedule_error_code + 30, f"{fn}Maximum of {max_periods} periods allowed, {len(periods)} provided")
 
-        body = {"deviceSN": device_sn, "groups": periods[-max_periods:]}
+        body = {"deviceSN": device_sn, "groups": periods}
 
         response = signed_post(path="/op/v2/device/scheduler/enable", body=body)
 

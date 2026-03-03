@@ -781,7 +781,7 @@ def get_generation(update=1):
 
     result = get_result(fn, response, get_generation_error_code + 20)
 
-    if result.get("today") is None:
+    if result.get("today") is None or result.get("today") == result.get("cumulative"):
         result["today"] = 0.0
 
     if update == 1:

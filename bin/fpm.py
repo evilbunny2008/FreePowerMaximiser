@@ -94,6 +94,11 @@ def perform_download(url, filename):
 
         response.raise_for_status()
 
+        result = response.json()
+
+        if not result:
+            return False
+
         if DEBUG >= 3:
             print(f"Successfully downloaded from: {response.url}")
 
@@ -101,9 +106,6 @@ def perform_download(url, filename):
             f.write(response.text)
 
         return True
-
-        if DEBUG >= 3:
-            print(f"Successfully saved the response to: {filename}")
 
     except Exception as e:
         if DEBUG >= 1:
@@ -501,12 +503,8 @@ def get_json(now, which):
     if not os.path.exists(filename):
 
         if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-           (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30)):
-
-            print(f"url: {url}")
-            print(f"filename: {filename}")
-            print(f"last_attempt_time: {last_attempt_time}")
-            print(f"last_successful_time: {last_successful_time}")
+           (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
+           (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
             last_download[which]["last_attempt_time"] = now_really
             download_performed = do_download(url, filename)
@@ -519,16 +517,12 @@ def get_json(now, which):
             if schedule_time < now and should_download_now(schedule_time, filename):
 
                 if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-                   (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30)):
+                   (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
+                   (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                     if DEBUG >= 2:
                         print(f"schedule_time is less than now")
                         print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
-
-                    print(f"url: {url}")
-                    print(f"filename: {filename}")
-                    print(f"last_attempt_time: {last_attempt_time}")
-                    print(f"last_successful_time: {last_successful_time}")
 
                     last_download[which]["last_attempt_time"] = now_really
                     download_performed = do_download(url, filename)
@@ -537,9 +531,16 @@ def get_json(now, which):
     if not download_performed and DEBUG >= 2:
         print("\n✓ No downloads needed at this time...")
 
-    if os.path.exists(filename):
-        with open(filename, "r") as f:
-            return json.load(f)
+    try:
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                ret = json.load(f)
+                if not ret:
+                    return []
+
+                return ret
+    except:
+        pass
 
     return []
 
@@ -549,13 +550,16 @@ def get_BOM_geohash(lat, lon):
     if lat == 0 and lon == 0:
         return None
 
-    ret = None
-    if os.path.exists(BOM_geohash_filename):
-        with open(BOM_geohash_filename, "r") as f:
-            ret = f.read()
+    try:
+        if os.path.exists(BOM_geohash_filename):
+            with open(BOM_geohash_filename, "r") as f:
+                ret = f.read()
 
-    if ret is not None and len(ret) == 6:
-        return ret
+                if ret is not None and len(ret) == 6:
+                    return ret
+
+    except Exception as e:
+        pass
 
     url = f"https://api.weather.bom.gov.au/v1/locations?search={lat},{lon}"
 
@@ -706,17 +710,9 @@ def main():
         print()
 
     rest_of_today_kWhr1 = 0
-    rest_of_today_kWhr1a = 0
-    rest_of_today_kWhr1b = 0
     rest_of_today_kWhr2 = 0
-    rest_of_today_kWhr2a = 0
-    rest_of_today_kWhr2b = 0
     rest_of_today_kWhr3 = 0
-    rest_of_today_kWhr3a = 0
-    rest_of_today_kWhr3b = 0
     rest_of_today_kWhr4 = 0
-    rest_of_today_kWhr4a = 0
-    rest_of_today_kWhr4b = 0
 
     max_kWhrs1 = 0
     charge_rate = 1
@@ -752,39 +748,25 @@ def main():
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
-            rest_of_today_kWhr1 = round(forecast1_dict["with"] / 1000.00, 2)
-            rest_of_today_kWhr1a = round(forecast1_dict["without"] / 1000.00, 2)
-            rest_of_today_kWhr1b = round(forecast1_dict["period"] / 1000.00, 2)
+            rest_of_today_kWhr1 = round(forecast1_dict["without"] / 1000.00, 2)
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
-            rest_of_today_kWhr2 = round(forecast2_dict["with"] / 1000.00, 2)
-            rest_of_today_kWhr2a = round(forecast2_dict["without"] / 1000.00, 2)
-            rest_of_today_kWhr2b = round(forecast2_dict["period"] / 1000.00, 2)
+            rest_of_today_kWhr2 = round(forecast2_dict["without"] / 1000.00, 2)
 
         if (forecast1 is not None or forecast2 is not None) and DEBUG >= 1:
-            print(f"Solcast forecast for the rest of today: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
-            if rest_of_today_kWhr1 + rest_of_today_kWhr2 != rest_of_today_kWhr1 + rest_of_today_kWhr2a:
-                print(f"Solcast forecast for the rest of today (without 2nd solar system between {fp_start.hour}am to {(fp_end_hour - 12)}pm): {(rest_of_today_kWhr1 + rest_of_today_kWhr2a):.2f}kWhrs")
-
-            print()
+            print(f"Solcast forecast for the rest of today excluding {fp_start.hour}am to {(fp_end_hour - 12)}pm: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
-            rest_of_today_kWhr3 = round(forecast3_dict["with"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr3a = round(forecast3_dict["without"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr3b = round(forecast3_dict["period"] * fsolar_degredation2 / 1000.00, 2)
+            rest_of_today_kWhr3 = round(forecast3_dict["without"] * fsolar_degredation2 / 1000.00, 2)
 
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
-            rest_of_today_kWhr4 = round(forecast4_dict["with"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr4a = round(forecast4_dict["without"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr4b = round(forecast4_dict["period"] * fsolar_degredation2 / 1000.00, 2)
+            rest_of_today_kWhr4 = round(forecast4_dict["without"] * fsolar_degredation2 / 1000.00, 2)
 
         if (forecast3 is not None or forecast4 is not None) and DEBUG >= 1:
-            print(f"forecast.solar forecast for the rest of today: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
-            if rest_of_today_kWhr1 + rest_of_today_kWhr2 != rest_of_today_kWhr1 + rest_of_today_kWhr2a:
-                print(f"forecast.solar forecast for the rest of today (without 2nd solar system between {fp_start.hour}am to {(fp_end_hour - 12)}pm): {(rest_of_today_kWhr3 + rest_of_today_kWhr4a):.2f}kWhrs")
+            print(f"forecast.solar forecast for the rest of today excluding {fp_start.hour}am to {(fp_end_hour - 12)}pm: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
 
             print()
 
@@ -836,73 +818,35 @@ def main():
             print(f"max_kWhrs1 needed until {(be_start_hour - 12)}pm: {max_kWhrs1}kWhrs")
             print()
 
-        est_kWhrs1 = rest_of_today_kWhr1 + rest_of_today_kWhr2a - max_kWhrs1
+        est_kWhrs1 = rest_of_today_kWhr1 + rest_of_today_kWhr2 - max_kWhrs1
 
         if est_kWhrs1 < 0 and DEBUG >= 1:
             print(f"A negative result below indicates there will be more consumption than generation")
 
-        if DEBUG >= 1:
-            print(f"Solcast predicts est_kWhrs1 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {est_kWhrs1:.2f}kWhrs")
+        left_in_battery_kWhrs = curr_kWhr + est_kWhrs1
 
-        est_kWhrs2 = rest_of_today_kWhr3 + rest_of_today_kWhr4a - max_kWhrs1
-
-        if est_kWhrs2 < 0 and DEBUG >= 1:
-            print(f"A negative result below indicates there will be more consumption than generation")
+        if left_in_battery_kWhrs > max_batt_kWhr:
+             left_in_battery_kWhrs = max_batt_kWhr
 
         if DEBUG >= 1:
-            print(f"Forecast.solar est_kWhrs2 produced by solar minus usage in the house by {(be_start_hour - 12)}pm: {est_kWhrs2:.2f}kWhrs")
+            print(f"left_in_battery_kWhrs at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs:.2f}kWhrs")
 
-        left_in_battery_kWhrs1 = curr_kWhr + est_kWhrs1
-
-        if left_in_battery_kWhrs1 > max_batt_kWhr:
-             left_in_battery_kWhrs1 = max_batt_kWhr
+        new_batt_percent = round(left_in_battery_kWhrs / max_batt_kWhr * 100.0, 1)
 
         if DEBUG >= 1:
-            print(f"Solcast predicts left_in_battery_kWhrs1 at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs1:.2f}kWhrs")
+            print(f"The Battery capacity at {(be_start_hour - 12)}pm could be: {new_batt_percent:.1f}%")
 
-        left_in_battery_kWhrs2 = curr_kWhr + est_kWhrs2
+        need_kWhrs = target_kWhr - left_in_battery_kWhrs
 
-        if left_in_battery_kWhrs2 > max_batt_kWhr:
-             left_in_battery_kWhrs2 = max_batt_kWhr
+        if need_kWhrs > 0 and less_hrs > 0:
 
-        if DEBUG >= 1:
-            print(f"Forecast.solar predicts left_in_battery_kWhrs2 at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs2:.2f}kWhrs")
-
-        new_batt_percent1 = round(left_in_battery_kWhrs1 / max_batt_kWhr * 100.0, 1)
-
-        if DEBUG >= 1:
-            print(f"Solcast predicts the Battery capacity at {(be_start_hour - 12)}pm: {new_batt_percent1:.1f}%")
-
-        new_batt_percent2 = round(left_in_battery_kWhrs2 / max_batt_kWhr * 100.0, 1)
-
-        if DEBUG >= 1:
-            print(f"Forecast.solar predicts the battery capacity at {(be_start_hour - 12)}pm: {new_batt_percent2}%")
-
-        need_kWhrs1 = target_kWhr - left_in_battery_kWhrs1
-
-        if need_kWhrs1 > 0:
-
-            charge_rate = need_watts1 = round(need_kWhrs1 * 1000 / less_hrs)
+            need_watts = round(need_kWhrs * 1000 / less_hrs)
 
             if DEBUG >= 1:
-                print(f"Solcast says we will have a deficit of {need_kWhrs1:.2f}kWhrs")
-                print(f"Solcast says we need to pull {need_watts1} watts for a total of {need_kWhrs1:.2f}kWhrs from the grid between {fp_start.hour}am and {(fp_end_hour - 12)}pm")
+                print(f"We should import at {need_watts} watts for a total of {need_kWhrs:.2f}kWhrs from the grid between {fp_start.hour}am and {(fp_end_hour - 12)}pm")
 
         elif DEBUG >= 1:
-                print(f"Solcast says we will have a surplus of {abs(need_kWhrs1):.2f}kWhrs today")
-
-        need_kWhrs2 = target_kWhr - left_in_battery_kWhrs2
-        # Handle forecast.solar forecast
-        if need_kWhrs2 > 0:
-
-             need_watts2 = round(need_kWhrs2 * 1000 / less_hrs)
-
-             if DEBUG >= 1:
-                 print(f"forecast.solar says we will have a deficit of {need_kWhrs2:.2f}kWhrs")
-                 print(f"forecast.solar says we need to pull {need_watts2} watts for a total of {need_kWhrs2:.2f}kWhrs from the grid between {fp_start.hour}am and {(fp_end_hour - 12)}pm")
-
-        elif DEBUG >= 1:
-                print(f"forecast.solar says we will have a surplus of {abs(need_kWhrs2):.2f}kWhrs today")
+                print(f"We will have a surplus of {abs(need_kWhrs):.2f}kWhrs today")
 
         if DEBUG >= 1:
             print()
@@ -966,7 +910,7 @@ def main():
         if DEBUG >= 1:
             print(f"max_kWhrs needed to {(be_end.hour - 12)}pm: {max_kWhrs:.2f}kWhrs")
 
-        excess_kWhrs = curr_kWhr + rest_of_today_kWhr1 + rest_of_today_kWhr2b - discharge_target_kWhr - max_kWhrs
+        excess_kWhrs = curr_kWhr + rest_of_today_kWhr1 + rest_of_today_kWhr2 - discharge_target_kWhr - max_kWhrs
 
         if DEBUG >= 1:
             print(f"excess_kWhrs to {(be_end.hour - 12)}pm: {excess_kWhrs:.2f}kWhrs")
@@ -1005,6 +949,7 @@ def main():
             max_nbe_time = (nbe_end - nbe_start).total_seconds() / 3600
             max_nbe_amount = nbe_max_rate_kW * 1000 * max_nbe_time
 
+
             extra_Whrs = second_amount
             if extra_Whrs > max_nbe_amount:
                 extra_Whrs = max_nbe_amount
@@ -1025,11 +970,13 @@ def main():
 
         print()
 
+    sys.exit()
+
     new_periods = generate_periods(now, charge_rate, discharge_amount)
 
-    #pprint(new_periods)
+    pprint(new_periods)
 
-    #sys.exit()
+    sys.exit()
 
     curr_periods = openapi.get_schedule()["periods"]
 
@@ -1227,7 +1174,6 @@ if __name__ == "__main__":
 
     # Scheduled download times
     SOLCAST_SCHEDULED_TIMES = [
-        datetime.combine(now.date(), time(10, 50), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(12, 0), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(13, 0), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(13, 30), tzinfo=LOCAL_TZ),
@@ -1237,6 +1183,8 @@ if __name__ == "__main__":
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(12, 30), tzinfo=LOCAL_TZ)])
     else:
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(18, 0), tzinfo=LOCAL_TZ)])
+
+    SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(10, 50), tzinfo=LOCAL_TZ)])
 
     SOLCAST_SCHEDULED_TIMES.sort()
 

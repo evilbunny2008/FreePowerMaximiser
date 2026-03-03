@@ -208,9 +208,12 @@ def generate_periods(now, charge_rate, discharge_amount):
 
     periods = []
 
-    discharge_amount = int(discharge_amount)
+    discharge_amount = int(discharge_amount * 1000)
+
+    discharge_amount = 24000
 
     fdPwr = int(be_max_rate_kW * 1500)
+    export_fdPwr = int(be_max_rate_kW * 1000)
 
     if charge_rate < 1:
         charge_rate = 1
@@ -218,14 +221,19 @@ def generate_periods(now, charge_rate, discharge_amount):
     if charge_rate > fdPwr:
         charge_rate = fdPwr
 
-    if discharge_amount < 0:
+    if discharge_amount <= 0:
         discharge_amount = 0
+    else:
+        discharge_amount = int(discharge_amount / 60) * 60
+
+    tmp_fp_start = fp_start + timedelta(minutes=1)
+    tmp_fp_end = fp_end - timedelta(minutes=2)
 
     periods.extend([{"enable": 1,
                      "startHour": 0,
                      "startMinute": 0,
-                     "endHour": fp_start.hour,
-                     "endMinute": 1,
+                     "endHour": tmp_fp_start.hour,
+                     "endMinute": tmp_fp_start.minute,
                      "extraParam": {"exportLimit": 100000,
                                     "fdPwr": fdPwr,
                                     "fdSoc": battery_min_grid_percent,
@@ -237,10 +245,10 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "workMode": "SelfUse"}])
 
     periods.extend([{"enable": 1,
-                     "startHour": fp_start.hour,
-                     "startMinute": 1,
-                     "endHour": (fp_end.hour - 1),
-                     "endMinute": 58,
+                     "startHour": tmp_fp_start.hour,
+                     "startMinute": tmp_fp_start.minute,
+                     "endHour": tmp_fp_end.hour,
+                     "endMinute": tmp_fp_end.minute,
                      "extraParam": {"exportLimit": 100000,
                                     "fdPwr": charge_rate,
                                     "fdSoc": battery_target_percent,
@@ -254,8 +262,8 @@ def generate_periods(now, charge_rate, discharge_amount):
     if discharge_amount <= 0 or be_start is None or be_end is None:
 
         periods.extend([{"enable": 1,
-                         "startHour": (fp_end_hour - 1),
-                         "startMinute": 58,
+                         "startHour": tmp_fp_end.hour,
+                         "startMinute": tmp_fp_end.minute,
                          "endHour": 23,
                          "endMinute": 59,
                          "extraParam": {"exportLimit": 100000,
@@ -270,33 +278,46 @@ def generate_periods(now, charge_rate, discharge_amount):
 
         return periods
 
-    start_time = be_start + timedelta(minutes=-1)
+    start_time = be_start
     if start_time < now:
         start_time = now
 
-    be_end_time = be_end + timedelta(minutes=1)
+    max_hours = (be_end - start_time).total_seconds() / 3600
 
-    max_time = (be_end_time - start_time).total_seconds() / 3600
-    max_amount = int(be_max_rate_kW * 1000 * max_time)
+    max_rate = be_max_rate_kW * 1000
+
+    max_amount = int(max_rate * max_hours)
+
+    discharge_hours = discharge_amount / max_rate
+
+    end_time = start_time + timedelta(hours=discharge_hours)
 
     extra_discharge_amount = 0
-    if discharge_amount > max_amount:
+    if end_time > be_end:
+        end_time = be_end
         extra_discharge_amount = discharge_amount - max_amount
         discharge_amount = max_amount
 
-    discharge_rate = int(discharge_amount / max_time)
+    discharge_rate = discharge_amount / max_rate
 
-    if DEBUG >= 3:
-        print(f"start_time.hour: {start_time.hour}")
-        print(f"start_time.minute: {start_time.minute}")
-        print(f"be_end.hour: {be_end.hour}")
-        print(f"be_end.minute: {be_end.minute}")
+    discharge_amount2 = 0
+    if discharge_amount > be_max_kWh * 1000:
+        discharge_amount2 = discharge_amount - be_max_kWh * 1000
+        discharge_amount = be_max_kWh * 1000
+
+    earn1 = discharge_amount / 1000 * be_fit
+    earn1 += discharge_amount2 / 1000 * be_fallback_fit
+
+    if start_time == be_start:
+        print(f"You may earn up to ${earn1:.2f} exporting between {(be_start.hour - 12)}pm and {(be_end.hour - 12)}pm")
+    else:
+        print(f"You may earn up to ${earn1:.2f} exporting between now and {(be_end.hour - 12)}pm")
 
     periods.extend([{"enable": 1,
-                     "startHour": (fp_end_hour - 1),
-                     "startMinute": 58,
-                     "endHour": start_time.hour,
-                     "endMinute": start_time.minute,
+                     "startHour": tmp_fp_end.hour,
+                     "startMinute": tmp_fp_end.minute,
+                     "endHour": be_start.hour,
+                     "endMinute": be_start.minute,
                      "extraParam": {"exportLimit": 100000,
                                     "fdPwr": fdPwr,
                                     "fdSoc": battery_min_grid_percent,
@@ -308,12 +329,12 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "workMode": "SelfUse"}])
 
     periods.extend([{"enable": 1,
-                     "startHour": start_time.hour,
-                     "startMinute": start_time.minute,
-                     "endHour": be_end_time.hour,
-                     "endMinute": be_end_time.minute,
+                     "startHour": be_start.hour,
+                     "startMinute": be_start.minute,
+                     "endHour": end_time.hour,
+                     "endMinute": end_time.minute,
                      "extraParam": {"exportLimit": 100000,
-                         "fdPwr": discharge_rate,
+                         "fdPwr": export_fdPwr,
                          "fdSoc": battery_min_grid_percent,
                          "importLimit": 100000,
                          "maxSoc": 100,
@@ -322,11 +343,16 @@ def generate_periods(now, charge_rate, discharge_amount):
                          "reactivePower": 0},
                      "workMode": "ForceDischarge"}])
 
+    if extra_discharge_amount < 0:
+        extra_discharge_amount = 0
+    else:
+        extra_discharge_amount = int(extra_discharge_amount / 60) * 60
+
     if extra_discharge_amount <= 0 or nbe_start is None or nbe_end is None:
 
         periods.extend([{"enable": 1,
-                         "startHour": be_end_time.hour,
-                         "startMinute": be_end_time.minute,
+                         "startHour": end_time.hour,
+                         "startMinute": end_time.minute,
                          "endHour": 23,
                          "endMinute": 59,
                          "extraParam": {"exportLimit": 100000,
@@ -341,27 +367,13 @@ def generate_periods(now, charge_rate, discharge_amount):
 
         return periods
 
-    start_time = nbe_start
-
-    if start_time < be_end_time:
-        start_time = be_end_time
-
-    if start_time < now:
-        start_time = now
-
-    hours = extra_discharge_amount / be_max_rate_kW
-
-    end_time = start_time + timedelta(hours=hours)
-    if end_time > nbe_end:
-        end_time = nbe_end
-
-    if be_end.hour != start_time.hour or be_end.minute != start_time.minute:
+    if end_time != nbe_start:
 
         periods.extend([{"enable": 1,
-                         "startHour": be_end_time.hour,
-                         "startMinute": be_end_time.minute,
-                         "endHour": start_time.hour,
-                         "endMinute": start_time.minute,
+                         "startHour": end_time.hour,
+                         "startMinute": end_time.minute,
+                         "endHour": nbe_start.hour,
+                         "endMinute": nbe_start.minute,
                          "extraParam": {"exportLimit": 100000,
                                         "fdPwr": fdPwr,
                                         "fdSoc": battery_min_grid_percent,
@@ -372,13 +384,39 @@ def generate_periods(now, charge_rate, discharge_amount):
                                         "reactivePower": 0},
                          "workMode": "SelfUse"}])
 
+    nstart_time = nbe_start
+    if nstart_time < now:
+        nstart_time = now
+
+    nmax_hours = (nbe_end - nstart_time).total_seconds() / 3600
+
+    nmax_rate = nbe_max_rate_kW * 1000
+
+    nmax_amount = int(nmax_rate * nmax_hours)
+
+    extra_discharge_hours = extra_discharge_amount / nmax_rate
+
+    nend_time = nstart_time + timedelta(hours=extra_discharge_hours)
+
+    if nend_time > nbe_end:
+        nend_time = nbe_end
+
+    nmax_hours = (nend_time - nstart_time).total_seconds() / 3600
+
+    earn2 = extra_discharge_amount / 1000 / max_discharge_rate * nmax_hours * nbe_fit
+
+    if nstart_time == nbe_start:
+        print(f"You may earn up to ${earn2:.2f} exporting between {(nbe_start.hour - 12)}pm and {(nbe_end.hour - 12)}pm")
+    else:
+        print(f"You may earn up to ${earn2:.2f} exporting between now and {(nbe_end.hour - 12)}pm")
+
     periods.extend([{"enable": 1,
-                     "startHour": start_time.hour,
-                     "startMinute": start_time.minute,
-                     "endHour": end_time.hour,
-                     "endMinute": end_time.minute,
+                     "startHour": nbe_start.hour,
+                     "startMinute": nbe_start.minute,
+                     "endHour": nend_time.hour,
+                     "endMinute": nend_time.minute,
                      "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": be_max_rate_kW * 1000,
+                                    "fdPwr": export_fdPwr,
                                     "fdSoc": battery_min_grid_percent,
                                     "importLimit": 100000,
                                     "maxSoc": 100,
@@ -388,8 +426,8 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "workMode": "ForceDischarge"}])
 
     periods.extend([{"enable": 1,
-                     "startHour": end_time.hour,
-                     "startMinute": end_time.minute,
+                     "startHour": nend_time.hour,
+                     "startMinute": nend_time.minute,
                      "endHour": 23,
                      "endMinute": 59,
                      "extraParam": {"exportLimit": 100000,
@@ -650,7 +688,7 @@ def sanitise_percent(percent, can_be_zero):
     if percent > 100:
         percent = 100
 
-    return percent
+    return int(percent)
 
 def sanitise_kWhr(value, can_be_zero):
 
@@ -674,18 +712,18 @@ def main():
 
     max_batt_kWhr = batt["capacity"]
     curr_kWhr = batt["residual"]
-    curr_percent = curr_kWhr / max_batt_kWhr * 100.00
+    curr_percent = round(curr_kWhr / max_batt_kWhr * 100.00)
 
     target_kWhr = round(max_batt_kWhr * battery_target_percent / 100.00, 2)
     discharge_target_kWhr = round(max_batt_kWhr * battery_discharge_target_percent / 100.00, 2)
 
     if DEBUG >= 1:
         print(f"max_batt_kWhr: {max_batt_kWhr:.2f}kWhrs")
-        print(f"battery_target_percent: {battery_target_percent:.1f}%")
+        print(f"battery_target_percent: {battery_target_percent}%")
         print(f"target_kWhr: {target_kWhr:.2f}kWhrs")
-        print(f"battery_discharge_target_percent: {battery_discharge_target_percent:.1f}%")
+        print(f"battery_discharge_target_percent: {battery_discharge_target_percent}%")
         print(f"discharge_target_kWhr: {discharge_target_kWhr:.2f}kWhrs")
-        print(f"curr_percent: {curr_percent:.1f}%")
+        print(f"curr_percent: {curr_percent}%")
         print(f"curr_kWhr: {curr_kWhr:.2f}kWhrs")
 
     if report is None:
@@ -716,8 +754,6 @@ def main():
 
     max_kWhrs1 = 0
     charge_rate = 1
-    discharge_rate = 0
-    est_kWhrs1 = est_kWhrs2 = 0
     if now < be_start:
 
         print(f"fsolar_url1: {last_download['fsolar1']['url']}")
@@ -831,19 +867,19 @@ def main():
         if DEBUG >= 1:
             print(f"left_in_battery_kWhrs at {(be_start_hour - 12)}pm: {left_in_battery_kWhrs:.2f}kWhrs")
 
-        new_batt_percent = round(left_in_battery_kWhrs / max_batt_kWhr * 100.0, 1)
+        new_batt_percent = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
 
         if DEBUG >= 1:
-            print(f"The Battery capacity at {(be_start_hour - 12)}pm could be: {new_batt_percent:.1f}%")
+            print(f"The Battery capacity at {(be_start_hour - 12)}pm could be: {new_batt_percent}%")
 
         need_kWhrs = target_kWhr - left_in_battery_kWhrs
 
         if need_kWhrs > 0 and less_hrs > 0:
 
-            need_watts = round(need_kWhrs * 1000 / less_hrs)
+            charge_rate = round(need_kWhrs * 1000 / less_hrs)
 
             if DEBUG >= 1:
-                print(f"We should import at {need_watts} watts for a total of {need_kWhrs:.2f}kWhrs from the grid between {fp_start.hour}am and {(fp_end_hour - 12)}pm")
+                print(f"We should import at {charge_rate} watts for a total of {need_kWhrs:.2f}kWhrs from the grid between {fp_start.hour}am and {(fp_end_hour - 12)}pm")
 
         elif DEBUG >= 1:
                 print(f"We will have a surplus of {abs(need_kWhrs):.2f}kWhrs today")
@@ -915,66 +951,20 @@ def main():
         if DEBUG >= 1:
             print(f"excess_kWhrs to {(be_end.hour - 12)}pm: {excess_kWhrs:.2f}kWhrs")
 
-        export_hrs = (be_end - start_time).total_seconds() / 3600
-        discharge_rate = excess_kWhrs / export_hrs * 1000
+        if DEBUG >= 1:
+            print()
 
     if charge_rate < 1:
         charge_rate = 1
 
-    if charge_rate > fp_max_charge_rate * 1000:
-        charge_rate = fp_max_charge_rate * 1000
+    if charge_rate > max_charge_rate * 1000:
+        charge_rate = max_charge_rate * 1000
 
     charge_rate = int(charge_rate)
 
-    if discharge_rate < be_min_rate_kW * 1000:
-        discharge_rate = 0
+    new_periods = generate_periods(now, charge_rate, excess_kWhrs)
 
-    discharge_amount = excess_kWhrs * 1000
-
-    first_amount = discharge_amount
-    second_amount = 0
-    line1 = line2 = None
-    if discharge_rate > 0:
-
-        if first_amount > be_max_rate_kW * 1000 * export_hrs:
-            first_amount = be_max_rate_kW * 1000 * export_hrs
-            second_amount = discharge_amount - first_amount
-
-        earn1 = first_amount / 1000 * be_fit
-
-        line1 = f"You will earn up to ${earn1:.2f} exporting between {(be_start_hour - 12)}pm and {(be_end.hour - 12)}pm"
-
-        if second_amount > 0:
-
-            max_nbe_time = (nbe_end - nbe_start).total_seconds() / 3600
-            max_nbe_amount = nbe_max_rate_kW * 1000 * max_nbe_time
-
-
-            extra_Whrs = second_amount
-            if extra_Whrs > max_nbe_amount:
-                extra_Whrs = max_nbe_amount
-
-            earn2 = extra_Whrs / 1000 * nbe_fit
-
-            line2 = f"You will earn up to ${earn2:.2f} exporting between {(nbe_start_hour - 12)}pm and {(nbe_end.hour - 12)}pm"
-
-    print(f"Setting {fp_start.hour}am to {(fp_end_hour - 12)}pm charge rate at {charge_rate} watts and setting the {(be_start_hour - 12)}pm to {(be_end.hour - 12)}pm discharge for {(discharge_amount / 1000):.2f}kWhrs")
-
-    if DEBUG >= 1:
-
-        if line1 is not None:
-            print(line1)
-
-        if line2 is not None:
-            print(line2)
-
-        print()
-
-    sys.exit()
-
-    new_periods = generate_periods(now, charge_rate, discharge_amount)
-
-    pprint(new_periods)
+    #pprint(new_periods)
 
     sys.exit()
 
@@ -1029,9 +1019,9 @@ if __name__ == "__main__":
     if DEBUG > 3:
         DEBUG = 3
 
-    battery_target_percent = sanitise_percent(configParser.getfloat("Defaults", "target_percent", fallback = 80), False)
-    battery_discharge_target_percent = sanitise_percent(configParser.getfloat("Defaults", "discharge_target_percent", fallback = 80), False)
-    battery_min_grid_percent = sanitise_percent(configParser.getfloat("Defaults", "min_grid_percent", fallback = 30), False)
+    battery_target_percent = sanitise_percent(configParser.getint("Defaults", "target_percent", fallback = 80), False)
+    battery_discharge_target_percent = sanitise_percent(configParser.getint("Defaults", "discharge_target_percent", fallback = 80), False)
+    battery_min_grid_percent = sanitise_percent(configParser.getint("Defaults", "min_grid_percent", fallback = 30), False)
 
     house_usage = sanitise_kWhr(configParser.getfloat("Defaults", "average_usage", fallback = 0.6), False)
 
@@ -1044,6 +1034,9 @@ if __name__ == "__main__":
     lon = configParser.getfloat("Defaults", "lon", fallback = 0.0)
     start_angle = configParser.getfloat("Defaults", "start_angle", fallback = 22.5)
     drop_off_angle = configParser.getfloat("Defaults", "drop_off_angle", fallback = 22.5)
+
+    max_charge_rate = configParser.getfloat("Defaults", "max_charge_rate", fallback = 5)
+    max_discharge_rate = configParser.getfloat("Defaults", "max_discharge_rate", fallback = 5)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
 
@@ -1066,7 +1059,6 @@ if __name__ == "__main__":
 
     fp_start_hour = configParser.getint("FreePowerTime", "start_hour", fallback = 11)
     fp_end_hour = configParser.getint("FreePowerTime", "end_hour", fallback = 14)
-    fp_max_charge_rate = configParser.getfloat("FreePowerTime", "max_charge_rate", fallback = 5)
 
     if fp_start_hour < 0:
         print(f"You set the free power start hour less than 0 or midnight.")
@@ -1085,6 +1077,8 @@ if __name__ == "__main__":
     be_max_rate_kW = configParser.getfloat("BestExportTime", "max_rate_kW", fallback = 5)
     be_min_rate_kW = configParser.getfloat("BestExportTime", "min_rate_kW", fallback = 3)
     be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
+    be_max_kWh = configParser.getfloat("BestExportTime", "max_kWh_at_high_fit", fallback = 10)
+    be_fallback_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.06)
 
     if be_start_hour is not None and be_end_hour is not None:
 

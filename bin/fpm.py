@@ -1076,7 +1076,7 @@ def main():
 
     new_periods = generate_periods(now, charge_rate, excess_kWhrs)
 
-    #pprint(new_periods)
+    pprint(new_periods)
 
     sys.exit()
 

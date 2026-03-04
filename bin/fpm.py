@@ -159,22 +159,51 @@ def get_wh_total2(now, fsolar_data):
         for k, v in fsolar_data["result"].items()
     }
 
+    start_time = now.replace(minute=0, second=0, microsecond=0)
+
     # Find values for today only
-    today_data = {dt: wh for dt, wh in parsed.items() if dt.date() == now.date() and dt >= now}
+    today_data = {dt: wh for dt, wh in parsed.items() if dt.date() == start_time.date()}
 
     if not today_data:
         return {"with": 0, "without": 0, "period": 0}
 
+    previous_start_wh = 0
     rest_of_today_wh = 0
-    start_wh = None
+    start_wh = 0
     # Get cumulative Wh up to current hour
     for dt, wh in today_data.items():
-        if now <= dt:
 
-            if start_wh == None:
+        if start_time <= dt:
+            previous_start_wh = wh
+
+        if start_time < dt:
+
+            if wh > 0 and start_wh <= 0:
                 start_wh = wh
 
             rest_of_today_wh = wh
+
+    if 0 < previous_start_wh <= start_wh:
+
+        diff = (start_wh - previous_start_wh) / 2
+
+        print(f"diff: {diff}")
+
+        time = (60 - now.minute) / 60
+
+        print(f"time: {time}")
+
+        diff_wh = diff * time
+
+        print(f"diff_wh: {diff_wh}")
+
+        print(f"start_wh: {start_wh}")
+
+        start_wh -= diff_wh
+
+        print(f"start_wh: {start_wh}")
+
+        print()
 
     rest_of_today_wh -= start_wh
 
@@ -182,19 +211,21 @@ def get_wh_total2(now, fsolar_data):
     if start_time < fp_start:
         start_time = fp_start
 
+    start_time = start_time.replace(minute=0, second=0, microsecond=0)
+
     # Get cumulative Wh at free power period
     period_wh = 0
-    start_wh = None
+    start_wh = 0
     for dt, wh in today_data.items():
 
         if start_time <= dt < fp_end:
 
-            if start_wh is not None:
+            if start_wh == 0:
                 start_wh = wh
 
             period_wh = wh
 
-    if start_wh is not None:
+    if start_wh > 0:
         period_wh -= start_wh
 
     return {"with": rest_of_today_wh, "without": rest_of_today_wh - period_wh, "period": period_wh}
@@ -705,6 +736,9 @@ def main():
 
     global min_grid_export_kWhr
 
+    if DEBUG >= 1:
+        print(f"Now: {now}")
+
     gen = openapi.get_generation()
     if gen is None:
         print("Failed to get data from Fox ESS API")
@@ -751,19 +785,20 @@ def main():
     rest_of_today_kWhr3 = 0
     rest_of_today_kWhr4 = 0
 
-    max_kWhrs1 = max_kWhrs3 = max_kWhrs4 = 0
-    excess_kWhrs = excess_kWhrs3 = excess_kWhrs4 = 0
     charge_rate = 1
+    est_kWhrs1 = est_kWhrs2 = est_kWhrs3 = est_kWhrs4 = 0
+    excess_kWhrs = excess_kWhrs3 = excess_kWhrs4 = 0
+    max_kWhrs1 = max_kWhrs3 = max_kWhrs4 = 0
+    needed_kWhrs = 0
     if now < be_start:
-
-        print(f"fsolar_url1: {last_download['fsolar1']['url']}")
-        print(f"fsolar_url2: {last_download['fsolar2']['url']}")
-        print()
 
         # Fetch and save or load forecasts
         if (last_download["fsolar1"]["url"] is not None and last_download["fsolar1"]["url"].startswith("https://") or \
             last_download["fsolar2"]["url"] is not None and last_download["fsolar2"]["url"].startswith("https://")) and DEBUG >= 2:
             print("Fetching and/or loading forecast.solar forecasts...")
+            print(f"fsolar_url1: {last_download['fsolar1']['url']}")
+            print(f"fsolar_url2: {last_download['fsolar2']['url']}")
+            print()
 
         if last_download["fsolar1"]["url"] is not None and last_download["fsolar1"]["url"].startswith("https://"):
             forecast3 = get_json(now, "fsolar1")
@@ -774,15 +809,15 @@ def main():
         if (last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://") or \
             last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://")) and DEBUG >= 2:
             print("Fetching and/or loading Solcast forecasts...")
+            print(f"solcast_url1: {last_download['solcast1']['url']}")
+            print(f"solcast_url2: {last_download['solcast2']['url']}")
+            print()
 
         if last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://"):
             forecast1 = get_json(now, "solcast1")
 
         if last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://"):
             forecast2 = get_json(now, "solcast2")
-
-        if DEBUG >= 2:
-            print()
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
@@ -792,10 +827,18 @@ def main():
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
             rest_of_today_kWhr2 = round(forecast2_dict["without"] / 1000.00, 2)
+            rest_of_today_kWhr2a = round(forecast2_dict["period"] / 1000.00, 2)
 
         if (forecast1 is not None or forecast2 is not None) and DEBUG >= 1:
-            print(f"Solcast forecast between {fp_start.hour}am to {(fp_end.hour - 12)}pm: {rest_of_today_kWhr1a:.2f}kWhrs")
-            print(f"Solcast forecast for the rest of today excluding {fp_start.hour}am to {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
+
+            if now <= fp_start:
+                print(f"Solcast forecast between {fp_start.hour}am to {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr1a + rest_of_today_kWhr2a):.2f}kWhrs")
+                print(f"Solcast forecast for the rest of today (excluding {fp_start.hour}am to {(fp_end.hour - 12)}pm): {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
+            elif now <= fp_end:
+                print(f"Solcast forecast until {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr1a + rest_of_today_kWhr2a):.2f}kWhrs")
+                print(f"Solcast forecast for the rest of the day after {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
+            else:
+                print(f"Solcast forecast for the rest of today: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
@@ -805,10 +848,18 @@ def main():
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
             rest_of_today_kWhr4 = round(forecast4_dict["without"] * fsolar_degredation2 / 1000.00, 2)
+            rest_of_today_kWhr4a = round(forecast4_dict["period"] * fsolar_degredation2 / 1000.00, 2)
 
         if (forecast3 is not None or forecast4 is not None) and DEBUG >= 1:
-            print(f"forecast.solar forecast between {fp_start.hour}am to {(fp_end.hour - 12)}pm: {rest_of_today_kWhr3a:.2f}kWhrs")
-            print(f"forecast.solar forecast for the rest of today excluding {fp_start.hour}am to {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
+
+            if now <= fp_start:
+                print(f"forecast.solar forecast between {fp_start.hour}am to {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr3a + rest_of_today_kWhr4a):.2f}kWhrs")
+                print(f"forecast.solar forecast for the rest of today (excluding {fp_start.hour}am to {(fp_end.hour - 12)}pm): {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
+            elif now <= fp_end:
+                print(f"forecast.solar forecast until {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr3a + rest_of_today_kWhr4a):.2f}kWhrs")
+                print(f"forecast.solar forecast for the rest of the day after {(fp_end.hour - 12)}pm: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
+            else:
+                print(f"forecast.solar forecast for the rest of today: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
 
             print()
 
@@ -818,7 +869,12 @@ def main():
             time_period_in_hours1 = 0
 
         if DEBUG >= 1:
-            print(f"time_period_in_hours1 (counting {fp_start.hour}am to {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {time_period_in_hours1:.2f} hrs")
+            if now < fp_start:
+                print(f"time_period_in_hours1 (counting {fp_start.hour}am to {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {time_period_in_hours1:.2f} hrs")
+            elif now < fp_end:
+                print(f"time_period_in_hours1 (counting from now to {(fp_end.hour - 12)}pm) and until {(be_start.hour - 12)}pm: {time_period_in_hours1:.2f} hrs")
+            else:
+                print(f"time_period_in_hours1 until {(be_start.hour - 12)}pm: {time_period_in_hours1:.2f} hrs")
 
         start_period = fp_start
         end_period = fp_end
@@ -831,23 +887,28 @@ def main():
         if now >= end_period:
             less_hrs = 0
 
-        if DEBUG >= 1:
+        if less_hrs > 0 and DEBUG >= 1:
             print(f"less_hrs: {less_hrs:.2f}hrs")
 
         time_period_in_hours2 = time_period_in_hours1 - less_hrs
 
         if DEBUG >= 1:
-            print(f"time_period_in_hours2 (not counting {fp_start.hour}am to {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {time_period_in_hours2:.2f} hrs")
+            if now < fp_start:
+                print(f"time_period_in_hours2 from now (not counting {fp_start.hour}am to {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {time_period_in_hours2:.2f} hrs")
+            elif now < fp_end:
+                print(f"time_period_in_hours2 from {(fp_end.hour - 12)}pm until {(be_start.hour - 12)}pm: {time_period_in_hours2:.2f} hrs")
+            else:
+                print(f"time_period_in_hours2 until {(be_start.hour - 12)}pm: {time_period_in_hours2:.2f} hrs")
 
         house_usage_kWhrs1 = round(house_usage * time_period_in_hours2, 2)
 
         if DEBUG >= 1:
             if now < fp_start:
-                print(f"house_usage_kWhrs1 from now until {fp_start.hour}am and from {(fp_end.hour - 12)}pm until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
+                print(f"house_usage_kWhrs1 from now (not counting {fp_start.hour}am to {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
             elif now < fp_end:
                 print(f"house_usage_kWhrs1 from {(fp_end.hour - 12)}pm until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
-            elif now < be_start:
-                print(f"house_usage_kWhrs1 from now until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
+            else:
+                print(f"house_usage_kWhrs1 until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
 
         BOM_dict = get_BOM_hourly(now, now, be_start)
 
@@ -858,11 +919,11 @@ def main():
 
         if DEBUG >= 1:
             if now < fp_start:
-                print(f"approx_aircon_usage1 from now until {fp_start.hour}am and from {(fp_end.hour - 12)}pm to {(be_start.hour - 12)}pm: {approx_aircon_usage1}kWhrs")
+                print(f"approx_aircon_usage1 from now (not counting {fp_start.hour}am and from {(fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {approx_aircon_usage1}kWhrs")
             elif now < fp_end:
-                print(f"house_usage_kWhrs1 from {(fp_end.hour - 12)}pm until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
-            elif now < be_start:
-                print(f"house_usage_kWhrs1 from now until {(be_start.hour - 12)}pm: {house_usage_kWhrs1}kWhrs")
+                print(f"approx_aircon_usage1 from {(be_start.hour - 12)}pm: {approx_aircon_usage1}kWhrs")
+            else:
+                print(f"approx_aircon_usage1 until {(be_start.hour - 12)}pm: {approx_aircon_usage1}kWhrs")
 
         max_kWhrs1 = approx_aircon_usage1 + house_usage_kWhrs1
 
@@ -873,7 +934,9 @@ def main():
         est_kWhrs1 = rest_of_today_kWhr1 + rest_of_today_kWhr2 - max_kWhrs1
 
         if DEBUG >= 1:
+
             if est_kWhrs1 < 0:
+                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"est_kWhrs1 at {(be_start.hour - 12)}pm: {est_kWhrs1:.2f}kWhrs")
@@ -890,6 +953,7 @@ def main():
 
         if DEBUG >= 1:
             print(f"The Battery capacity at {(be_start.hour - 12)}pm could be: {new_batt_percent}%")
+            print()
 
         needed_kWhrs = charge_kWhr - left_in_battery_kWhrs
 
@@ -911,10 +975,14 @@ def main():
                 print(f"We should import at {charge_rate} watts from the grid between {fp_start.hour}am and {(fp_end.hour - 12)}pm so that the " + \
                       f"battery will be up to {after_kWhrs:.2f}kWhrs/{after_import}% by {(be_start.hour - 12)}pm")
 
-        elif DEBUG >= 1:
-                print(f"We will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
+                print()
 
         if DEBUG >= 1:
+            if needed_kWhrs < 0:
+                print(f"We will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
+            elif needed_kWhrs == 0:
+                print(f"We will have neither a surplus or deficit today")
+
             print()
 
     if be_start is not None and be_end is not None and now < be_end:
@@ -929,7 +997,7 @@ def main():
             if start_time == be_start:
                 print(f"time_period_in_hours3 from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
             else:
-                print(f"time_period_in_hours3 from now to {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
+                print(f"time_period_in_hours3 until {(be_end.hour - 12)}pm: {time_period_in_hours3:.2f} hrs")
 
         house_usage_kWhrs3 = round(house_usage * time_period_in_hours3, 2)
 
@@ -937,7 +1005,7 @@ def main():
             if start_time == be_start:
                 print(f"house_usage_kWhrs3 from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {house_usage_kWhrs3:.2f}kWhrs")
             else:
-                print(f"house_usage_kWhrs3 from now to {(be_end.hour - 12)}pm: {house_usage_kWhrs3:.2f}kWhrs")
+                print(f"house_usage_kWhrs3 until {(be_end.hour - 12)}pm: {house_usage_kWhrs3:.2f}kWhrs")
 
         BOM_dict = get_BOM_hourly(now, start_time, be_end)
 
@@ -947,7 +1015,7 @@ def main():
             if start_time == be_start:
                 print(f"approx_aircon_usage3 from {(start_time.hour - 12)}pm to {(be_end.hour - 12)}pm: {approx_aircon_usage3:.2f}kWhrs")
             else:
-                print(f"approx_aircon_usage3 from now to {(be_end.hour - 12)}pm: {approx_aircon_usage3:.2f}kWhrs")
+                print(f"approx_aircon_usage3 until {(be_end.hour - 12)}pm: {approx_aircon_usage3:.2f}kWhrs")
 
         max_kWhrs3 = approx_aircon_usage3 + house_usage_kWhrs3
 
@@ -955,12 +1023,14 @@ def main():
             if start_time == be_start:
                 print(f"max_kWhrs3 needed from {(be_start.hour - 12)}pm to {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
             else:
-                print(f"max_kWhrs3 needed from now to {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
+                print(f"max_kWhrs3 needed from until {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
 
         est_kWhrs3 = est_kWhrs1 - max_kWhrs3
 
         if DEBUG >= 1:
+
             if est_kWhrs3 < 0:
+                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"est_kWhrs3 at {(be_end.hour - 12)}pm: {est_kWhrs3:.2f}kWhrs")
@@ -981,7 +1051,9 @@ def main():
         excess_kWhrs3 = left_in_battery_kWhrs3 - be_kWhr
 
         if DEBUG >= 1:
+
             if excess_kWhrs3 < 0:
+                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"excess_kWhrs3 at {(be_end.hour - 12)}pm: {excess_kWhrs3:.2f}kWhrs")
@@ -1000,7 +1072,7 @@ def main():
             if nstart_time == nbe_start:
                 print(f"time_period_in_hours4 from {(nbe_start.hour - 12)}pm to {(nbe_end.hour - 12)}pm: {time_period_in_hours4:.2f} hrs")
             else:
-                print(f"time_period_in_hours4 from now to {(nbe_end.hour - 12)}pm: {time_period_in_hours4:.2f} hrs")
+                print(f"time_period_in_hours4 until {(nbe_end.hour - 12)}pm: {time_period_in_hours4:.2f} hrs")
 
         house_usage_kWhrs4 = round(house_usage * time_period_in_hours4, 2)
 
@@ -1008,7 +1080,7 @@ def main():
             if nstart_time == nbe_start:
                 print(f"house_usage_kWhrs4 from {(nbe_start.hour - 12)}pm to {(nbe_end.hour - 12)}pm: {house_usage_kWhrs4:.2f}kWhrs")
             else:
-                print(f"house_usage_kWhrs4 from now to {(nbe_end.hour - 12)}pm: {house_usage_kWhrs4:.2f}kWhrs")
+                print(f"house_usage_kWhrs4 until {(nbe_end.hour - 12)}pm: {house_usage_kWhrs4:.2f}kWhrs")
 
         BOM_dict = get_BOM_hourly(now, nstart_time, nbe_end)
 
@@ -1018,7 +1090,7 @@ def main():
             if nstart_time == nbe_start:
                 print(f"approx_aircon_usage4 from {(nstart_time.hour - 12)}pm to {(nbe_end.hour - 12)}pm: {approx_aircon_usage4:.2f}kWhrs")
             else:
-                print(f"approx_aircon_usage4 from now to {(nbe_end.hour - 12)}pm: {approx_aircon_usage4:.2f}kWhrs")
+                print(f"approx_aircon_usage4 until {(nbe_end.hour - 12)}pm: {approx_aircon_usage4:.2f}kWhrs")
 
         max_kWhrs4 = round(approx_aircon_usage4 + house_usage_kWhrs4, 2)
 
@@ -1026,14 +1098,16 @@ def main():
             if nstart_time == nbe_start:
                 print(f"max_kWhrs4 needed from {(nbe_start.hour - 12)}pm to {(nbe_end.hour - 12)}pm: {max_kWhrs4:.2f}kWhrs")
             else:
-                print(f"max_kWhrs4 needed from now to {(nbe_end.hour - 12)}pm: {max_kWhrs4:.2f}kWhrs")
+                print(f"max_kWhrs4 needed until {(nbe_end.hour - 12)}pm: {max_kWhrs4:.2f}kWhrs")
 
             print()
 
         est_kWhrs4 = est_kWhrs3 - max_kWhrs4
 
         if DEBUG >= 1:
+
             if est_kWhrs4 < 0:
+                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"est_kWhrs4 at {(nbe_end.hour - 12)}pm: {est_kWhrs4:.2f}kWhrs")
@@ -1054,7 +1128,9 @@ def main():
         excess_kWhrs4 = left_in_battery_kWhrs4 - nbe_kWhr
 
         if DEBUG >= 1:
+
             if excess_kWhrs4 < 0:
+                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"excess_kWhrs4 at {(nbe_end.hour - 12)}pm: {excess_kWhrs4:.2f}kWhrs")
@@ -1076,7 +1152,7 @@ def main():
 
     new_periods = generate_periods(now, charge_rate, excess_kWhrs)
 
-    pprint(new_periods)
+    #pprint(new_periods)
 
     sys.exit()
 
@@ -1252,7 +1328,7 @@ if __name__ == "__main__":
     UTC_TZ = ZoneInfo("UTC")
 
     now = datetime.now(LOCAL_TZ)
-    #now = datetime(2026, 3, 3, 17, 0, 0, tzinfo=LOCAL_TZ)
+    #now = datetime(2026, 3, 4, 13, 15, 0, tzinfo=LOCAL_TZ)
 
     fp_start = datetime.combine(now.date(), time(fp_start_hour), tzinfo=LOCAL_TZ)
     fp_end = datetime.combine(now.date(), time(fp_end_hour), tzinfo=LOCAL_TZ)
@@ -1281,24 +1357,23 @@ if __name__ == "__main__":
 
     # Scheduled download times
     SOLCAST_SCHEDULED_TIMES = [
-        datetime.combine(now.date(), time(12, 0), tzinfo=LOCAL_TZ),
-        datetime.combine(now.date(), time(13, 0), tzinfo=LOCAL_TZ),
-        datetime.combine(now.date(), time(13, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now.date(), time(12, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now.date(), time(12, 30, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now.date(), time(13, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now.date(), time(13, 30, 30), tzinfo=LOCAL_TZ),
     ]
 
     if be_start is None or solar_dropoff < be_start:
-        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(12, 30), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(11, 30, 30), tzinfo=LOCAL_TZ)])
     else:
-        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(18, 0), tzinfo=LOCAL_TZ)])
-
-    SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(10, 50), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(18, 0, 30), tzinfo=LOCAL_TZ)])
 
     SOLCAST_SCHEDULED_TIMES.sort()
 
     FSOLAR_SCHEDULED_TIMES = []
     for hour in range(0, 19):
         for minute in [0, 30]:
-            new_time = datetime.combine(now.date(), time(hour, minute), tzinfo=LOCAL_TZ)
+            new_time = datetime.combine(now.date(), time(hour, minute, 30), tzinfo=LOCAL_TZ)
 
             if new_time < solar_dropoff:
                 FSOLAR_SCHEDULED_TIMES.extend([new_time])
@@ -1306,18 +1381,18 @@ if __name__ == "__main__":
     BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
 
     if fsolar_tilt1 != -1:
-        fsolar_url1 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt1}/{fsolar_az1}/{fsolar_size1}.json?start=now"
+        fsolar_url1 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt1}/{fsolar_az1}/{fsolar_size1}.json"
         if tz is not None and tz != "":
-            fsolar_url1 += f"&time={tz}"
+            fsolar_url1 += f"?time={tz}"
 
         last_download["fsolar1"]["url"] = fsolar_url1
     else:
         last_download["fsolar1"]["url"] = None
 
     if fsolar_tilt2 != -1:
-        fsolar_url2 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt2}/{fsolar_az2}/{fsolar_size2}.json?start=now"
+        fsolar_url2 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt2}/{fsolar_az2}/{fsolar_size2}.json"
         if tz is not None and tz != "":
-            fsolar_url2 += f"&time={tz}"
+            fsolar_url2 += f"?time={tz}"
 
         last_download["fsolar2"]["url"] = fsolar_url2
     else:

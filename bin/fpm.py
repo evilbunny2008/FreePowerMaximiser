@@ -23,9 +23,6 @@ from openapi import FoxESSAPIError
 from pprint import pprint
 from zoneinfo import ZoneInfo
 
-# Set the default debugging here unless set in the .conf file
-DEBUG = 0
-
 # Cached file names
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
@@ -167,13 +164,15 @@ def get_wh_total2(now, fsolar_data):
     if not today_data:
         return {"with": 0, "without": 0, "period": 0}
 
+    pprint(today_data)
+
     previous_start_wh = 0
     rest_of_today_wh = 0
     start_wh = 0
     # Get cumulative Wh up to current hour
     for dt, wh in today_data.items():
 
-        if start_time <= dt:
+        if start_time <= dt and wh > 0 and previous_start_wh == 0:
             previous_start_wh = wh
 
         if start_time < dt:
@@ -183,7 +182,11 @@ def get_wh_total2(now, fsolar_data):
 
             rest_of_today_wh = wh
 
-    if 0 < previous_start_wh <= start_wh:
+    if previous_start_wh > 0:
+
+        print(f"start_wh: {start_wh}")
+
+        print(f"previous_start_wh: {previous_start_wh}")
 
         diff = (start_wh - previous_start_wh) / 2
 
@@ -335,9 +338,9 @@ def generate_periods(now, charge_rate, discharge_amount):
     earn1 += discharge_amount2 / 1000 * be_fallback_fit
 
     if start_time == be_start:
-        print(f"You may earn up to ${earn1:.2f} exporting between {(be_start.hour - 12)}pm and {(be_end.hour - 12)}pm")
+        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between {(be_start.hour - 12)}pm and {(be_end.hour - 12)}pm")
     else:
-        print(f"You may earn up to ${earn1:.2f} exporting between now and {(be_end.hour - 12)}pm")
+        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between now and {(be_end.hour - 12)}pm")
 
     periods.extend([{"enable": 1,
                      "startHour": fp_end.hour,
@@ -432,9 +435,9 @@ def generate_periods(now, charge_rate, discharge_amount):
     earn2 = extra_discharge_amount / 1000 / max_discharge_rate * nmax_hours * nbe_fit
 
     if nstart_time == nbe_start:
-        print(f"You may earn up to ${earn2:.2f} exporting between {(nbe_start.hour - 12)}pm and {(nbe_end.hour - 12)}pm")
+        print(f"You may earn up to ${earn2:.2f} exporting {(extra_discharge_amount / 1000):.2f}kWh between {(nbe_start.hour - 12)}pm and {(nbe_end.hour - 12)}pm")
     else:
-        print(f"You may earn up to ${earn2:.2f} exporting between now and {(nbe_end.hour - 12)}pm")
+        print(f"You may earn up to ${earn2:.2f} exporting {(extra_discharge_amount / 1000):.2f}kWh between now and {(nbe_end.hour - 12)}pm")
 
     periods.extend([{"enable": 1,
                      "startHour": nbe_start.hour,
@@ -564,36 +567,41 @@ def get_json(now, which_forecast):
     else:
         SCHEDULED_TIMES = FSOLAR_SCHEDULED_TIMES
 
-    if not os.path.exists(filename):
+    if not SkipAPI:
 
-        if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-           (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
-           (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
+        sys.exit()
 
-            last_download[which_forecast]["last_attempt_time"] = now_really
-            download_performed = do_download(url, filename)
-            last_download[which_forecast]["last_successful_time"] = now_really
+        if not os.path.exists(filename):
 
-    else:
+            if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
+               (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
+               (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
-        for schedule_time in SCHEDULED_TIMES:
-
-            if schedule_time <= now and should_download_now(schedule_time, filename):
-
-                if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-                   (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
-                   (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
-
-                    if DEBUG >= 2:
-                        print(f"schedule_time is less than now")
-                        print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
-
+                if not SkipAPI:
                     last_download[which_forecast]["last_attempt_time"] = now_really
                     download_performed = do_download(url, filename)
                     last_download[which_forecast]["last_successful_time"] = now_really
 
-    if not download_performed and DEBUG >= 2:
-        print("\n✓ No downloads needed at this time...")
+        else:
+
+            for schedule_time in SCHEDULED_TIMES:
+
+                if schedule_time <= now and should_download_now(schedule_time, filename):
+
+                    if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
+                       (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
+                       (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
+
+                        if DEBUG >= 2:
+                            print(f"schedule_time is less than now")
+                            print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
+
+                        last_download[which_forecast]["last_attempt_time"] = now_really
+                        download_performed = do_download(url, filename)
+                        last_download[which_forecast]["last_successful_time"] = now_really
+
+        if not download_performed and DEBUG >= 2:
+            print("\n✓ No downloads needed at this time...")
 
     try:
         if os.path.exists(filename):
@@ -736,48 +744,57 @@ def main():
     if DEBUG >= 1:
         print(f"Now: {now}")
 
-    #history = openapi.get_history("today", v=["PVEnergyTotal", "generation", "SoC"])
-    #history = openapi.get_history("today", v=["PVEnergyTotal", "generation"])
-    history = openapi.get_history("today")
+    if not SkipAPI:
 
-    if history is None:
-        print("Failed to get data from Fox ESS API")
-        sys.exit()
+        #history = openapi.get_history("today", v=["PVEnergyTotal", "generation", "SoC"])
+        #history = openapi.get_history("today", v=["PVEnergyTotal", "generation"])
+        history = openapi.get_history("today")
+        if history is None:
+            print("Failed to get data from Fox ESS API")
+            sys.exit()
 
-    gen_kWhr = 0
-    for row in history:
+        gen_kWhr = 0
+        for row in history:
 
-        if row["unit"] != "kWh":
-            continue
+            if row["unit"] != "kWh":
+                continue
 
-        min = max = None
-        for row2 in row["data"]:
+            min = max = None
+            for row2 in row["data"]:
 
-            val = row2["value"];
-            if min is None or (val > 0 and val < min):
-                min = val
+                val = row2["value"];
+                if min is None or (val > 0 and val < min):
+                    min = val
 
-            if max is None or (val > 0 and val > max):
-                max = val
+                if max is None or (val > 0 and val > max):
+                    max = val
 
-        diff = max - min
+            diff = max - min
 
-        print(f"variable: {row['variable']}")
-        print(f"min: {min}{row['unit']}")
-        print(f"max: {max}{row['unit']}")
-        print(f"diff: {diff}{row['unit']}")
-        print()
+            if DEBUG >= 3:
+                print(f"variable: {row['variable']}")
+                print(f"min: {min}{row['unit']}")
+                print(f"max: {max}{row['unit']}")
+                print(f"diff: {diff}{row['unit']}")
+                print()
 
-        if row["variable"] in ["PVEnergyTotal", "feedin2"]:
-            gen_kWhr += diff
+            if row["variable"] in ["PVEnergyTotal", "feedin2"]:
+                gen_kWhr += diff
 
-    batt = openapi.get_battery()
-    if batt is None:
-        print("Failed to get data from Fox ESS API")
-        sys.exit()
+        batt = openapi.get_battery()
+        if batt is None:
+            print("Failed to get data from Fox ESS API")
+            sys.exit()
 
-    max_batt_kWhr = batt["capacity"]
-    curr_kWhr = batt["residual"]
+        max_batt_kWhr = batt["capacity"]
+        curr_kWhr = batt["residual"]
+
+    else:
+        max_batt_kWhr = 42
+        curr_kWhr = 21
+        gen_kWhr = 0
+
+
     curr_percent = round(curr_kWhr / max_batt_kWhr * 100.00)
 
     charge_kWhr = round(max_batt_kWhr * charge_percent / 100, 2)
@@ -1078,7 +1095,7 @@ def main():
         if DEBUG >= 1:
             print(f"The Battery capacity at {(be_end.hour - 12)}pm could be: {new_batt_percent3}%")
 
-        excess_kWhrs3 = left_in_battery_kWhrs3 - be_kWhr
+        excess_kWhrs3 = left_in_battery_kWhrs3 - be_kWhr + max_kWhrs3
 
         if DEBUG >= 1:
 
@@ -1186,38 +1203,49 @@ def main():
         pprint(new_periods)
         sys.exit()
 
-    curr_periods = openapi.get_schedule()["periods"]
-
-    if DEBUG >= 3:
-        print("curr_periods:")
-        pprint(curr_periods)
-
-        print()
-
-        print("new_periods:")
-        pprint(new_periods)
-
-    if check_periods(curr_periods, new_periods):
-        ret = openapi.set_schedule(new_periods)
-        print("Successfully uploaded new periods...")
+    if not SkipAPI:
+        curr_periods = openapi.get_schedule()["periods"]
 
         if DEBUG >= 3:
-            print()
-            pprint(ret)
+            print("curr_periods:")
+            pprint(curr_periods)
+
             print()
 
-    elif DEBUG >= 1:
-        print()
-        print("The new periods match the old periods... skipping uploading new periods...")
-        print()
+            print("new_periods:")
+            pprint(new_periods)
+
+        if check_periods(curr_periods, new_periods):
+            ret = openapi.set_schedule(new_periods)
+            print("Successfully uploaded new periods...")
+
+            if DEBUG >= 3:
+                print()
+                pprint(ret)
+                print()
+
+        elif DEBUG >= 1:
+            print()
+            print("The new periods match the old periods... skipping uploading new periods...")
+            print()
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Python script to tweak Fox ESS battery settings")
     parser.add_argument("-c", "--config", type = str, default="/etc/fpm.conf",
                         help="Path to config file, /etc/fpm.conf is the default")
+    parser.add_argument("-s", "--skip-openapi", action="store_true", help="Disables access to the Fox ESS API, only useful for testing and debugging")
     parser.add_argument("-u", "--upload", action="store_true", help="Upload the new schedule to the Fox ESS API")
+    parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity level (use -v, -vv, -vvv etc)')
     args = parser.parse_args()
+
+    DEBUG = 0
+    if args.verbose is not None and args.verbose > 0:
+        DEBUG = args.verbose
+
+    SkipAPI = False
+    if args.skip_openapi:
+        SkipAPI = True
 
     upload_schedule = False
     if args.upload:
@@ -1233,14 +1261,6 @@ if __name__ == "__main__":
 
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
-
-    DEBUG = configParser.getint("Defaults", "debug", fallback = DEBUG)
-
-    if DEBUG < 0:
-        DEBUG = 0
-
-    if DEBUG > 3:
-        DEBUG = 3
 
     charge_percent = sanitise_percent(configParser.getint("Defaults", "charge_percent", fallback = 80), False)
     min_grid_percent = sanitise_percent(configParser.getint("Defaults", "min_grid_percent", fallback = 30), False)
@@ -1362,8 +1382,8 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
     UTC_TZ = ZoneInfo("UTC")
 
-    now = datetime.now(LOCAL_TZ)
-    #now = datetime(2026, 3, 4, 13, 15, 0, tzinfo=LOCAL_TZ)
+    #now = datetime.now(LOCAL_TZ)
+    now = datetime(2026, 3, 7, 8, 0, 0, tzinfo=LOCAL_TZ)
 
     actual_fp_start = datetime.combine(now.date(), time(fp_start_hour), tzinfo=LOCAL_TZ)
     actual_fp_end = datetime.combine(now.date(), time(fp_end_hour), tzinfo=LOCAL_TZ)
@@ -1449,13 +1469,15 @@ if __name__ == "__main__":
         last_download["solcast2"]["url"] = None
 
     atexit.register(save_last_download)
-    atexit.register(openapi.save_cache_objects)
 
-    openapi.api_key = foxess_apikey
-    openapi.time_zone = tz
+    if not SkipAPI:
+        atexit.register(openapi.save_cache_objects)
 
-    openapi.debug_setting = DEBUG
+        openapi.api_key = foxess_apikey
+        openapi.time_zone = tz
 
-    openapi.load_cache_objects()
+        openapi.debug_setting = DEBUG
+
+        openapi.load_cache_objects()
 
     main()

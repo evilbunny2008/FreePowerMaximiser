@@ -292,7 +292,7 @@ def generate_periods(now, charge_rate, discharge_amount, house_load1, house_load
                                     "fdPwr": charge_rate,
                                     "fdSoc": 100,
                                     "importLimit": 100000,
-                                    "maxSoc": charge_percent,
+                                    "maxSoc": 100,
                                     "minSocOnGrid": min_grid_percent,
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
@@ -642,8 +642,6 @@ def get_json(which_forecast):
     last_attempt_time = last_download[which_forecast]["last_attempt_time"]
     last_successful_time = last_download[which_forecast]["last_successful_time"]
 
-    now = datetime.now(LOCAL_TZ)
-
     if "solcast.com" in url:
         SCHEDULED_TIMES = SOLCAST_SCHEDULED_TIMES
     else:
@@ -653,32 +651,32 @@ def get_json(which_forecast):
 
         if not os.path.exists(filename):
 
-            if (last_attempt_time is None or last_attempt_time < now - timedelta(minutes=10)) and \
-               (last_successful_time is None or last_successful_time < now - timedelta(minutes=30) or \
+            if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
+               (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
                (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                 if not SkipAPI:
-                    last_download[which_forecast]["last_attempt_time"] = now
+                    last_download[which_forecast]["last_attempt_time"] = now_really
                     download_performed = do_download(url, filename)
-                    last_download[which_forecast]["last_successful_time"] = now
+                    last_download[which_forecast]["last_successful_time"] = now_really
 
         else:
 
             for schedule_time in SCHEDULED_TIMES:
 
-                if schedule_time <= now and should_download_now(schedule_time, filename):
+                if schedule_time <= now_really and should_download_now(schedule_time, filename):
 
-                    if (last_attempt_time is None or last_attempt_time < now - timedelta(minutes=10)) and \
-                       (last_successful_time is None or last_successful_time < now - timedelta(minutes=15) or \
+                    if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
+                       (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
                        (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                         if DEBUG >= 2:
-                            print(f"schedule_time is less than now: {now}")
+                            print(f"schedule_time is less than now_really: {now_really}")
                             print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
 
-                        last_download[which_forecast]["last_attempt_time"] = now
+                        last_download[which_forecast]["last_attempt_time"] = now_really
                         download_performed = do_download(url, filename)
-                        last_download[which_forecast]["last_successful_time"] = now
+                        last_download[which_forecast]["last_successful_time"] = now_really
 
         if not download_performed and DEBUG >= 2:
             print("\n✓ No downloads needed at this time...")
@@ -746,7 +744,7 @@ def get_BOM_hourly(now, start_time, end_time):
         file_mtime = datetime.fromtimestamp(os.path.getmtime(BOM_filename), tz=LOCAL_TZ)
 
         # If file was modified today, use cached version
-        if now.hour == file_mtime.hour:
+        if now_really.hour == file_mtime.hour:
             needs_downloading = False
 
     if needs_downloading:
@@ -780,7 +778,7 @@ def get_BOM_hourly(now, start_time, end_time):
         if fl_temp < aircon_cool_temp:
             continue
 
-        if fc_period < start_time or fc_period >= end_time:
+        if not (start_time <= fc_period <= end_time):
             continue
 
         if fp_start.hour <= fc_period.hour < fp_end.hour:
@@ -788,6 +786,10 @@ def get_BOM_hourly(now, start_time, end_time):
             continue
 
         hours_without += 1
+
+    if DEBUG >= 3:
+        print(f"fp_period: {fp_period}")
+        print(f"hours_without: {hours_without}")
 
     return {"with": (fp_period + hours_without), "without": hours_without, "period": fp_period}
 
@@ -896,11 +898,7 @@ def main():
         print(f"nbe_percent: {nbe_percent}%")
         print(f"nbe_kWhr: {nbe_kWhr:.2f}kWhrs")
 
-        print()
-
         print(f"gen_kWhr: {gen_kWhr:.2f}kWhrs")
-
-        print()
 
     rest_of_today_kWhr1 = 0
     rest_of_today_kWhr2 = 0
@@ -910,13 +908,15 @@ def main():
     charge_rate = 1
     est_kWhrs1 = est_kWhrs2 = est_kWhrs3 = est_kWhrs4 = 0
     excess_kWhrs = excess_kWhrs3 = excess_kWhrs4 = 0
+    house_load1 = house_load2 = 0
     max_kWhrs1 = max_kWhrs3 = max_kWhrs4 = 0
     needed_kWhrs = 0
     if now < be_start:
 
         # Fetch and save or load forecasts
         if (last_download["fsolar1"]["url"] is not None and last_download["fsolar1"]["url"].startswith("https://") or \
-            last_download["fsolar2"]["url"] is not None and last_download["fsolar2"]["url"].startswith("https://")) and DEBUG >= 2:
+            last_download["fsolar2"]["url"] is not None and last_download["fsolar2"]["url"].startswith("https://")) and DEBUG >= 3:
+            print()
             print("Fetching and/or loading forecast.solar forecasts...")
             print(f"fsolar_url1: {last_download['fsolar1']['url']}")
             print(f"fsolar_url2: {last_download['fsolar2']['url']}")
@@ -928,7 +928,7 @@ def main():
             forecast4 = get_json("fsolar2")
 
         if (last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://") or \
-            last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://")) and DEBUG >= 2:
+            last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://")) and DEBUG >= 3:
             print()
             print("Fetching and/or loading Solcast forecasts...")
             print(f"solcast_url1: {last_download['solcast1']['url']}")
@@ -939,9 +939,6 @@ def main():
 
         if last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://"):
             forecast2 = get_json("solcast2")
-
-        if DEBUG >= 2:
-            print()
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
@@ -955,6 +952,8 @@ def main():
 
         if (forecast1 is not None or forecast2 is not None) and DEBUG >= 1:
 
+            print()
+
             if now <= actual_fp_start:
                 print(f"Solcast forecast between {actual_fp_start.hour}am to {(actual_fp_end.hour - 12)}pm: {(rest_of_today_kWhr1a + rest_of_today_kWhr2a):.2f}kWhrs")
                 print(f"Solcast forecast for the rest of today (excluding {actual_fp_start.hour}am to {(actual_fp_end.hour - 12)}pm): {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
@@ -963,9 +962,6 @@ def main():
                 print(f"Solcast forecast for the rest of the day after {(actual_fp_end.hour - 12)}pm: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
             else:
                 print(f"Solcast forecast for the rest of today: {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
-
-        if DEBUG >= 2:
-            print()
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
@@ -979,6 +975,8 @@ def main():
 
         if (forecast3 is not None or forecast4 is not None) and DEBUG >= 1:
 
+            print()
+
             if now <= actual_fp_start:
                 print(f"forecast.solar forecast between {actual_fp_start.hour}am to {(actual_fp_end.hour - 12)}pm: {(rest_of_today_kWhr3a + rest_of_today_kWhr4a):.2f}kWhrs")
                 print(f"forecast.solar forecast for the rest of today (excluding {actual_fp_start.hour}am to {(actual_fp_end.hour - 12)}pm): {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
@@ -988,14 +986,15 @@ def main():
             else:
                 print(f"forecast.solar forecast for the rest of today: {(rest_of_today_kWhr3 + rest_of_today_kWhr4):.2f}kWhrs")
 
-            print()
-
         time_period_in_hours1 = (be_start - now).total_seconds() / 3600
 
         if time_period_in_hours1 < 0:
             time_period_in_hours1 = 0
 
         if DEBUG >= 1:
+
+            print()
+
             if now < actual_fp_start:
                 print(f"time_period_in_hours1 (counting {actual_fp_start.hour}am to {(actual_fp_end.hour - 12)}pm) until {(be_start.hour - 12)}pm: {time_period_in_hours1:.2f} hrs")
             elif now < actual_fp_end:
@@ -1039,10 +1038,19 @@ def main():
 
         BOM_dict = get_BOM_hourly(now, now, be_start)
 
-        if DEBUG >= 1:
-            print(f"BOM_dict['without']: {BOM_dict['without']}hrs")
+        hrs = BOM_dict["without"] - 1
+        if hrs >= 0:
+            hrs += (60 - now.minute) / 60
+        else:
+            hrs = 0
 
-        approx_aircon_usage1 = round(BOM_dict["without"] * aircon_usage, 2)
+        approx_aircon_usage1 = round(aircon_usage * hrs, 2)
+
+        if DEBUG >= 3:
+            print(f"BOM_dict['without']: {BOM_dict['without']}")
+            print(f"hrs: {hrs}")
+            print(f"approx_aircon_usage1: {approx_aircon_usage1}")
+            print()
 
         if DEBUG >= 1:
             if now < actual_fp_start:
@@ -1056,14 +1064,12 @@ def main():
 
         if DEBUG >= 1:
             print(f"max_kWhrs1 needed until {(be_start.hour - 12)}pm: {max_kWhrs1:.2f}kWhrs")
-            print()
 
         est_kWhrs1 = rest_of_today_kWhr1 + rest_of_today_kWhr1a + rest_of_today_kWhr2 - max_kWhrs1
 
         if DEBUG >= 1:
 
             if est_kWhrs1 < 0:
-                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"est_kWhrs1 by {(be_start.hour - 12)}pm: {est_kWhrs1:.2f}kWhrs")
@@ -1080,7 +1086,6 @@ def main():
 
         if DEBUG >= 1:
             print(f"The Battery capacity at {(be_start.hour - 12)}pm could be: {new_batt_percent}%")
-            print()
 
         if now < fp_end:
             needed_kWhrs = charge_kWhr - left_in_battery_kWhrs
@@ -1109,7 +1114,8 @@ def main():
                 elif needed_kWhrs == 0:
                     print(f"We will have neither a surplus nor deficit today")
 
-                print()
+        if DEBUG >= 1:
+            print()
 
     if be_start is not None and be_end is not None and now < be_end:
 
@@ -1135,7 +1141,19 @@ def main():
 
         BOM_dict = get_BOM_hourly(now, start_time, be_end)
 
-        approx_aircon_usage3 = round(BOM_dict["with"] * aircon_usage, 2)
+        hrs = BOM_dict["without"] - 1
+        if hrs >= 0:
+            hrs += (60 - now.minute) / 60
+        else:
+            hrs = 0
+
+        approx_aircon_usage3 = round(aircon_usage * hrs, 2)
+
+        if DEBUG >= 3:
+            print(f"BOM_dict['without']: {BOM_dict['without']}")
+            print(f"hrs: {hrs}")
+            print(f"approx_aircon_usage3: {approx_aircon_usage3}")
+            print()
 
         if DEBUG >= 1:
             if start_time == be_start:
@@ -1156,7 +1174,6 @@ def main():
         if DEBUG >= 1:
 
             if est_kWhrs3 < 0:
-                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"est_kWhrs3 at {(be_end.hour - 12)}pm: {est_kWhrs3:.2f}kWhrs")
@@ -1179,7 +1196,6 @@ def main():
         if DEBUG >= 1:
 
             if excess_kWhrs3 < 0:
-                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"excess_kWhrs3 at {(be_end.hour - 12)}pm: {excess_kWhrs3:.2f}kWhrs")
@@ -1200,6 +1216,9 @@ def main():
 
         if DEBUG >= 1:
             print()
+
+    else:
+        left_in_battery_kWhrs3b = curr_kWhr
 
     if nbe_start is not None and nbe_end is not None and now < nbe_end:
 
@@ -1261,7 +1280,6 @@ def main():
         if DEBUG >= 1:
 
             if excess_kWhrs4 < 0:
-                print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
             print(f"excess_kWhrs4 at {(nbe_end.hour - 12)}pm: {excess_kWhrs4:.2f}kWhrs")
@@ -1303,6 +1321,7 @@ def main():
     new_periods = generate_periods(now, charge_rate, excess_Whrs, house_load1, house_load2)
 
     if not upload_schedule:
+        print()
         pprint(new_periods)
         sys.exit()
 
@@ -1338,7 +1357,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--config", type = str, default="/etc/fpm.conf",
                         help="Path to config file, /etc/fpm.conf is the default")
     parser.add_argument("-s", "--skip-openapi", action="store_true", help="Disables access to the Fox ESS API, only useful for testing and debugging")
-    parser.add_argument("-u", "--upload", action="store_true", help="Upload the new schedule to the Fox ESS API")
+    parser.add_argument("-n", "--no-upload", action="store_true", help="Don't uploading the new schedule to the Fox ESS API")
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity level (use -v, -vv, -vvv etc)')
     args = parser.parse_args()
 
@@ -1350,9 +1369,9 @@ if __name__ == "__main__":
     if args.skip_openapi:
         SkipAPI = True
 
-    upload_schedule = False
-    if args.upload:
-        upload_schedule = True
+    upload_schedule = True
+    if args.no_upload:
+        upload_schedule = False
 
     if(not os.path.exists(args.config) or not os.path.isfile(args.config)):
         print(f"Config file {args.config} doesn't exist.")
@@ -1486,7 +1505,7 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
     UTC_TZ = ZoneInfo("UTC")
 
-    now = datetime.now(LOCAL_TZ)
+    now = now_really = datetime.now(LOCAL_TZ)
     #now = datetime(2026, 3, 7, 8, 0, 0, tzinfo=LOCAL_TZ)
 
     actual_fp_start = datetime.combine(now.date(), time(fp_start_hour), tzinfo=LOCAL_TZ)
@@ -1516,8 +1535,6 @@ if __name__ == "__main__":
 
         print(f"drop_off_angle: {drop_off_angle}")
         print(f"solar_dropoff: {solar_dropoff.time()}")
-
-    now_really = datetime.now(LOCAL_TZ)
 
     # Scheduled download times
     SOLCAST_SCHEDULED_TIMES = [

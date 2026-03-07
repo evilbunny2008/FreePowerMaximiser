@@ -10,6 +10,7 @@ import argparse
 import atexit
 import configparser
 import json
+import math
 import openapi
 import os
 import pickle
@@ -130,15 +131,21 @@ def get_wh_total(now, solcast_data):
     period_wh = 0
     without_wh = 0
     # Get cumulative Wh up to current hour
-    for dt, wh in today_data.items():
-        if now <= dt:
+    for dt, kW in today_data.items():
 
-            wh *= 500
+        if now <= dt and kW > 0:
+
+            wh = kW * 500
 
             if fp_start <= dt < fp_end:
                 period_wh += wh
             else:
                 without_wh += wh
+
+            if DEBUG >= 3:
+                print(f"dt: {dt}")
+                print(f"kW: {kW}")
+                print(f"wh: {wh}")
 
     return {"with": period_wh + without_wh, "without": without_wh, "period": period_wh}
 
@@ -164,7 +171,8 @@ def get_wh_total2(now, fsolar_data):
     if not today_data:
         return {"with": 0, "without": 0, "period": 0}
 
-    pprint(today_data)
+    if DEBUG >= 3:
+        pprint(today_data)
 
     previous_start_wh = 0
     rest_of_today_wh = 0
@@ -184,29 +192,34 @@ def get_wh_total2(now, fsolar_data):
 
     if previous_start_wh > 0:
 
-        print(f"start_wh: {start_wh}")
+        if DEBUG > 3:
+            print(f"start_wh: {start_wh}")
 
-        print(f"previous_start_wh: {previous_start_wh}")
+            print(f"previous_start_wh: {previous_start_wh}")
 
         diff = (start_wh - previous_start_wh) / 2
 
-        print(f"diff: {diff}")
+        if DEBUG > 3:
+            print(f"diff: {diff}")
 
         time = (60 - now.minute) / 60
 
-        print(f"time: {time}")
+        if DEBUG > 3:
+            print(f"time: {time}")
 
         diff_wh = diff * time
 
-        print(f"diff_wh: {diff_wh}")
+        if DEBUG > 3:
+            print(f"diff_wh: {diff_wh}")
 
-        print(f"start_wh: {start_wh}")
+            print(f"start_wh: {start_wh}")
 
         start_wh -= diff_wh
 
-        print(f"start_wh: {start_wh}")
+        if DEBUG > 3:
+            print(f"start_wh: {start_wh}")
 
-        print()
+            print()
 
     rest_of_today_wh -= start_wh
 
@@ -238,25 +251,22 @@ def day_name(days_ahead):
     target = datetime.now(LOCAL_TZ) + timedelta(days=days_ahead)
     return target.strftime("%A")  # e.g. "Monday"
 
-def generate_periods(now, charge_rate, discharge_amount):
+def generate_periods(now, charge_rate, discharge_amount, house_load1, house_load2):
 
     periods = []
-
-    discharge_amount = int(discharge_amount * 1000)
-
-    fdPwr = int(be_max_rate_kW * 1500)
-    export_fdPwr = int(be_max_rate_kW * 1000)
 
     if charge_rate < 1:
         charge_rate = 1
 
-    if charge_rate > fdPwr:
-        charge_rate = fdPwr
+    if charge_rate > charge_rate_limit * 1000:
+        charge_rate = charge_rate_limit * 1000
 
-    if discharge_amount <= 0:
+    if discharge_amount < 0:
         discharge_amount = 0
-    else:
-        discharge_amount = int(discharge_amount / 60) * 60
+
+    import_fdPwr = int(charge_rate_limit * 1000)
+    export_fdPwr = int(be_max_rate_kW * 1000)
+    export_fdPwr2 = int(nbe_max_rate_kW * 1000)
 
     periods.extend([{"enable": 1,
                      "startHour": 0,
@@ -264,7 +274,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "endHour": fp_start.hour,
                      "endMinute": fp_start.minute,
                      "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": fdPwr,
+                                    "fdPwr": import_fdPwr,
                                     "fdSoc": min_grid_percent,
                                     "importLimit": 100000,
                                     "maxSoc": 100,
@@ -280,7 +290,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "endMinute": fp_end.minute,
                      "extraParam": {"exportLimit": 100000,
                                     "fdPwr": charge_rate,
-                                    "fdSoc": min_grid_percent,
+                                    "fdSoc": 100,
                                     "importLimit": 100000,
                                     "maxSoc": charge_percent,
                                     "minSocOnGrid": min_grid_percent,
@@ -296,7 +306,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                          "endHour": 23,
                          "endMinute": 59,
                          "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": fdPwr,
+                                        "fdPwr": import_fdPwr,
                                         "fdSoc": min_grid_percent,
                                         "importLimit": 100000,
                                         "maxSoc": 100,
@@ -313,26 +323,67 @@ def generate_periods(now, charge_rate, discharge_amount):
 
     max_hours = (be_end - start_time).total_seconds() / 3600
 
-    max_rate = be_max_rate_kW * 1000
+    house_rate = house_load1 / max_hours
+
+    max_rate = be_max_rate_kW * 1000 - house_rate
+    if max_rate > max_discharge_rate * 1000 - house_rate:
+        max_rate = max_discharge_rate * 1000 - house_rate
 
     max_amount = int(max_rate * max_hours)
 
-    discharge_hours = discharge_amount / max_rate
+    if DEBUG >= 3:
+        print(f"max_hours: {max_hours}")
+        print(f"max_rate: {max_rate}")
+        print(f"max_amount: {max_amount}")
+        print(f"house_load1: {house_load1}")
+        print(f"house_rate: {house_rate}")
 
-    end_time = start_time + timedelta(hours=discharge_hours)
+    discharge_amount = int(discharge_amount)
 
-    extra_discharge_amount = 0
+    discharge_time_secs = int(math.ceil(discharge_amount / max_rate * 60) * 60)
+
+    if DEBUG >= 3:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"discharge_time_secs: {discharge_time_secs}")
+
+    end_time = start_time + timedelta(seconds=discharge_time_secs)
+
+    if DEBUG >= 3:
+        print(f"end_time: {end_time}")
+
     if end_time > be_end:
         end_time = be_end
+
+    if DEBUG >= 3:
+        print(f"end_time: {end_time}")
+
+    max_hours = math.ceil((end_time - start_time).total_seconds() / 60) / 60
+
+    max_amount = int(max_rate * max_hours)
+
+    if DEBUG >= 3:
+        print(f"max_hours: {max_hours:.2f}")
+        print(f"max_rate: {max_rate}")
+        print(f"max_amount: {max_amount}")
+        print(f"discharge_amount: {discharge_amount}")
+
+    extra_discharge_amount = 0
+    if discharge_amount > max_amount:
         extra_discharge_amount = discharge_amount - max_amount
         discharge_amount = max_amount
 
-    discharge_rate = discharge_amount / max_rate
+    if DEBUG >= 3:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"extra_discharge_amount: {extra_discharge_amount}")
 
     discharge_amount2 = 0
     if discharge_amount > be_max_kWh * 1000:
         discharge_amount2 = discharge_amount - be_max_kWh * 1000
         discharge_amount = be_max_kWh * 1000
+
+    if DEBUG >= 3:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"discharge_amount2: {discharge_amount2}")
 
     earn1 = discharge_amount / 1000 * be_fit
     earn1 += discharge_amount2 / 1000 * be_fallback_fit
@@ -348,7 +399,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "endHour": be_start.hour,
                      "endMinute": be_start.minute,
                      "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": fdPwr,
+                                    "fdPwr": import_fdPwr,
                                     "fdSoc": min_grid_percent,
                                     "importLimit": 100000,
                                     "maxSoc": 100,
@@ -372,11 +423,6 @@ def generate_periods(now, charge_rate, discharge_amount):
                          "reactivePower": 0},
                      "workMode": "ForceDischarge"}])
 
-    if extra_discharge_amount < 0:
-        extra_discharge_amount = 0
-    else:
-        extra_discharge_amount = int(extra_discharge_amount / 60) * 60
-
     if extra_discharge_amount <= 0 or nbe_start is None or nbe_end is None:
 
         periods.extend([{"enable": 1,
@@ -385,7 +431,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                          "endHour": 23,
                          "endMinute": 59,
                          "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": fdPwr,
+                                        "fdPwr": import_fdPwr,
                                         "fdSoc": min_grid_percent,
                                         "importLimit": 100000,
                                         "maxSoc": 100,
@@ -404,7 +450,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                          "endHour": nbe_start.hour,
                          "endMinute": nbe_start.minute,
                          "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": fdPwr,
+                                        "fdPwr": import_fdPwr,
                                         "fdSoc": min_grid_percent,
                                         "importLimit": 100000,
                                         "maxSoc": 100,
@@ -417,22 +463,58 @@ def generate_periods(now, charge_rate, discharge_amount):
     if nstart_time < now:
         nstart_time = now
 
-    nmax_hours = (nbe_end - nstart_time).total_seconds() / 3600
+    nmax_hours = math.ceil((nbe_end - nstart_time).total_seconds() / 60) / 60
 
-    nmax_rate = nbe_max_rate_kW * 1000
+    house_rate = house_load2 / nmax_hours
+
+    nmax_rate = nbe_max_rate_kW * 1000 - house_rate
+    if nmax_rate > max_discharge_rate * 1000 - house_rate:
+        nmax_rate = max_discharge_rate * 1000 - house_rate
 
     nmax_amount = int(nmax_rate * nmax_hours)
 
-    extra_discharge_hours = extra_discharge_amount / nmax_rate
+    if DEBUG >= 3:
+        print(f"nmax_hours: {nmax_hours}")
+        print(f"nmax_rate: {nmax_rate}")
+        print(f"nmax_amount: {nmax_amount}")
 
-    nend_time = nstart_time + timedelta(hours=extra_discharge_hours)
+    ndischarge_time_secs = int(math.ceil(extra_discharge_amount / max_rate * 60) * 60)
+
+    if DEBUG >= 3:
+        print(f"extra_discharge_amount: {extra_discharge_amount}")
+        print(f"ndischarge_time_secs: {ndischarge_time_secs}")
+
+    nend_time = nstart_time + timedelta(seconds=ndischarge_time_secs)
+
+    if DEBUG >= 3:
+        print(f"nend_time: {nend_time}")
 
     if nend_time > nbe_end:
         nend_time = nbe_end
 
-    nmax_hours = (nend_time - nstart_time).total_seconds() / 3600
+    if DEBUG >= 3:
+        print(f"nend_time: {nend_time}")
 
-    earn2 = extra_discharge_amount / 1000 / max_discharge_rate * nmax_hours * nbe_fit
+    nmax_hours = math.ceil((nend_time - nstart_time).total_seconds() / 60) / 60
+
+    nmax_amount = int(nmax_rate * nmax_hours)
+
+    if DEBUG >= 3:
+        print(f"nmax_hours: {nmax_hours:.2f}")
+        print(f"nmax_rate: {nmax_rate}")
+        print(f"nmax_amount: {nmax_amount}")
+        print(f"extra_discharge_amount: {extra_discharge_amount}")
+
+    if extra_discharge_amount > nmax_amount:
+        extra_discharge_amount = nmax_amount
+
+    earn2 = extra_discharge_amount / 1000 * nbe_fit
+
+    if DEBUG >= 3:
+        print(f"extra_discharge_amount: {extra_discharge_amount}")
+        print(f"extra_discharge_amount / 1000: {(extra_discharge_amount / 1000):.2f}")
+        print(f"nbe_fit: {nbe_fit}")
+        print(f"earn2: {earn2}")
 
     if nstart_time == nbe_start:
         print(f"You may earn up to ${earn2:.2f} exporting {(extra_discharge_amount / 1000):.2f}kWh between {(nbe_start.hour - 12)}pm and {(nbe_end.hour - 12)}pm")
@@ -445,7 +527,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "endHour": nend_time.hour,
                      "endMinute": nend_time.minute,
                      "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": export_fdPwr,
+                                    "fdPwr": export_fdPwr2,
                                     "fdSoc": min_grid_percent,
                                     "importLimit": 100000,
                                     "maxSoc": 100,
@@ -460,7 +542,7 @@ def generate_periods(now, charge_rate, discharge_amount):
                      "endHour": 23,
                      "endMinute": 59,
                      "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": fdPwr,
+                                    "fdPwr": import_fdPwr,
                                     "fdSoc": min_grid_percent,
                                     "importLimit": 100000,
                                     "maxSoc": 100,
@@ -548,7 +630,7 @@ def do_download(url, filename):
 
     return download_performed
 
-def get_json(now, which_forecast):
+def get_json(which_forecast):
 
     global last_download
 
@@ -560,7 +642,7 @@ def get_json(now, which_forecast):
     last_attempt_time = last_download[which_forecast]["last_attempt_time"]
     last_successful_time = last_download[which_forecast]["last_successful_time"]
 
-    now_really = datetime.now(LOCAL_TZ)
+    now = datetime.now(LOCAL_TZ)
 
     if "solcast.com" in url:
         SCHEDULED_TIMES = SOLCAST_SCHEDULED_TIMES
@@ -569,18 +651,16 @@ def get_json(now, which_forecast):
 
     if not SkipAPI:
 
-        sys.exit()
-
         if not os.path.exists(filename):
 
-            if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-               (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
+            if (last_attempt_time is None or last_attempt_time < now - timedelta(minutes=10)) and \
+               (last_successful_time is None or last_successful_time < now - timedelta(minutes=30) or \
                (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                 if not SkipAPI:
-                    last_download[which_forecast]["last_attempt_time"] = now_really
+                    last_download[which_forecast]["last_attempt_time"] = now
                     download_performed = do_download(url, filename)
-                    last_download[which_forecast]["last_successful_time"] = now_really
+                    last_download[which_forecast]["last_successful_time"] = now
 
         else:
 
@@ -588,17 +668,17 @@ def get_json(now, which_forecast):
 
                 if schedule_time <= now and should_download_now(schedule_time, filename):
 
-                    if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-                       (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
+                    if (last_attempt_time is None or last_attempt_time < now - timedelta(minutes=10)) and \
+                       (last_successful_time is None or last_successful_time < now - timedelta(minutes=15) or \
                        (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                         if DEBUG >= 2:
-                            print(f"schedule_time is less than now")
+                            print(f"schedule_time is less than now: {now}")
                             print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
 
-                        last_download[which_forecast]["last_attempt_time"] = now_really
+                        last_download[which_forecast]["last_attempt_time"] = now
                         download_performed = do_download(url, filename)
-                        last_download[which_forecast]["last_successful_time"] = now_really
+                        last_download[which_forecast]["last_successful_time"] = now
 
         if not download_performed and DEBUG >= 2:
             print("\n✓ No downloads needed at this time...")
@@ -842,10 +922,10 @@ def main():
             print(f"fsolar_url2: {last_download['fsolar2']['url']}")
 
         if last_download["fsolar1"]["url"] is not None and last_download["fsolar1"]["url"].startswith("https://"):
-            forecast3 = get_json(now, "fsolar1")
+            forecast3 = get_json("fsolar1")
 
         if last_download["fsolar2"]["url"] is not None and last_download["fsolar2"]["url"].startswith("https://"):
-            forecast4 = get_json(now, "fsolar2")
+            forecast4 = get_json("fsolar2")
 
         if (last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://") or \
             last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://")) and DEBUG >= 2:
@@ -855,10 +935,10 @@ def main():
             print(f"solcast_url2: {last_download['solcast2']['url']}")
 
         if last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://"):
-            forecast1 = get_json(now, "solcast1")
+            forecast1 = get_json("solcast1")
 
         if last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://"):
-            forecast2 = get_json(now, "solcast2")
+            forecast2 = get_json("solcast2")
 
         if DEBUG >= 2:
             print()
@@ -986,7 +1066,7 @@ def main():
                 print()
                 print(f"A negative result below indicates there will be more consumption than generation")
 
-            print(f"est_kWhrs1 at {(be_start.hour - 12)}pm: {est_kWhrs1:.2f}kWhrs")
+            print(f"est_kWhrs1 by {(be_start.hour - 12)}pm: {est_kWhrs1:.2f}kWhrs")
 
         left_in_battery_kWhrs = curr_kWhr + est_kWhrs1
 
@@ -1002,35 +1082,34 @@ def main():
             print(f"The Battery capacity at {(be_start.hour - 12)}pm could be: {new_batt_percent}%")
             print()
 
-        needed_kWhrs = charge_kWhr - left_in_battery_kWhrs
+        if now < fp_end:
+            needed_kWhrs = charge_kWhr - left_in_battery_kWhrs
 
-        if needed_kWhrs < 0:
-            needed_kWhrs = 0
+            if needed_kWhrs < 0:
+                needed_kWhrs = 0
 
-        if needed_kWhrs > 0 and less_hrs > 0:
+            if needed_kWhrs > 0 and less_hrs > 0:
+
+                if DEBUG >= 1:
+                    print(f"We need an additional {needed_kWhrs:.2f}kWhrs")
+
+                charge_rate = round(needed_kWhrs * 1000 / less_hrs)
+
+                after_kWhrs = left_in_battery_kWhrs + needed_kWhrs
+
+                after_import = round(after_kWhrs / max_batt_kWhr * 100)
+
+                if DEBUG >= 1:
+                    print(f"We should import at {charge_rate} watts from the grid between {actual_fp_start.hour}am and {(actual_fp_end.hour - 12)}pm so that the " + \
+                          f"battery will be up to {after_kWhrs:.2f}kWhrs/{after_import}% by {(be_start.hour - 12)}pm")
 
             if DEBUG >= 1:
-                print(f"We need an additional {needed_kWhrs:.2f}kWhrs")
-
-            charge_rate = round(needed_kWhrs * 1000 / less_hrs)
-
-            after_kWhrs = left_in_battery_kWhrs + needed_kWhrs
-
-            after_import = round(after_kWhrs / max_batt_kWhr * 100)
-
-            if DEBUG >= 1:
-                print(f"We should import at {charge_rate} watts from the grid between {actual_fp_start.hour}am and {(actual_fp_end.hour - 12)}pm so that the " + \
-                      f"battery will be up to {after_kWhrs:.2f}kWhrs/{after_import}% by {(be_start.hour - 12)}pm")
+                if needed_kWhrs < 0:
+                    print(f"We will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
+                elif needed_kWhrs == 0:
+                    print(f"We will have neither a surplus nor deficit today")
 
                 print()
-
-        if DEBUG >= 1:
-            if needed_kWhrs < 0:
-                print(f"We will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
-            elif needed_kWhrs == 0:
-                print(f"We will have neither a surplus nor deficit today")
-
-            print()
 
     if be_start is not None and be_end is not None and now < be_end:
 
@@ -1072,7 +1151,7 @@ def main():
             else:
                 print(f"max_kWhrs3 needed from until {(be_end.hour - 12)}pm: {max_kWhrs3:.2f}kWhrs")
 
-        est_kWhrs3 = est_kWhrs1 - max_kWhrs3
+        est_kWhrs3 = est_kWhrs1 - max_kWhrs3 + needed_kWhrs
 
         if DEBUG >= 1:
 
@@ -1082,7 +1161,7 @@ def main():
 
             print(f"est_kWhrs3 at {(be_end.hour - 12)}pm: {est_kWhrs3:.2f}kWhrs")
 
-        left_in_battery_kWhrs3 = curr_kWhr + est_kWhrs3 + needed_kWhrs
+        left_in_battery_kWhrs3 = curr_kWhr + est_kWhrs3
 
         if left_in_battery_kWhrs3 > max_batt_kWhr:
              left_in_battery_kWhrs3 = max_batt_kWhr
@@ -1095,7 +1174,7 @@ def main():
         if DEBUG >= 1:
             print(f"The Battery capacity at {(be_end.hour - 12)}pm could be: {new_batt_percent3}%")
 
-        excess_kWhrs3 = left_in_battery_kWhrs3 - be_kWhr + max_kWhrs3
+        excess_kWhrs3 = left_in_battery_kWhrs3 - be_kWhr
 
         if DEBUG >= 1:
 
@@ -1105,6 +1184,21 @@ def main():
 
             print(f"excess_kWhrs3 at {(be_end.hour - 12)}pm: {excess_kWhrs3:.2f}kWhrs")
 
+        if excess_kWhrs3 > 0:
+            left_in_battery_kWhrs3b = left_in_battery_kWhrs3 - excess_kWhrs3
+
+            if left_in_battery_kWhrs3b > max_batt_kWhr:
+                left_in_battery_kWhrs3b = max_batt_kWhr
+
+            if DEBUG >= 1:
+                print(f"left_in_battery_kWhrs3b at {(be_end.hour - 12)}pm: {left_in_battery_kWhrs3b:.2f}kWhrs")
+
+            new_batt_percent3b = round(left_in_battery_kWhrs3b / max_batt_kWhr * 100)
+
+            if DEBUG >= 1:
+                print(f"The Battery capacity at {(be_end.hour - 12)}pm could be: {new_batt_percent3b}%")
+
+        if DEBUG >= 1:
             print()
 
     if nbe_start is not None and nbe_end is not None and now < nbe_end:
@@ -1149,17 +1243,7 @@ def main():
 
             print()
 
-        est_kWhrs4 = est_kWhrs3 - max_kWhrs4
-
-        if DEBUG >= 1:
-
-            if est_kWhrs4 < 0:
-                print()
-                print(f"A negative result below indicates there will be more consumption than generation")
-
-            print(f"est_kWhrs4 at {(nbe_end.hour - 12)}pm: {est_kWhrs4:.2f}kWhrs")
-
-        left_in_battery_kWhrs4 = curr_kWhr + est_kWhrs4 + needed_kWhrs - excess_kWhrs3
+        left_in_battery_kWhrs4 = left_in_battery_kWhrs3b - max_kWhrs4
 
         if left_in_battery_kWhrs4 > max_batt_kWhr:
              left_in_battery_kWhrs4 = max_batt_kWhr
@@ -1182,22 +1266,41 @@ def main():
 
             print(f"excess_kWhrs4 at {(nbe_end.hour - 12)}pm: {excess_kWhrs4:.2f}kWhrs")
 
+        if excess_kWhrs4 > 0:
+
+            left_in_battery_kWhrs4b = left_in_battery_kWhrs4 - excess_kWhrs4
+
+            if left_in_battery_kWhrs4b > max_batt_kWhr:
+                left_in_battery_kWhrs4b = max_batt_kWhr
+
+            if DEBUG >= 1:
+                print(f"left_in_battery_kWhrs4b at {(be_end.hour - 12)}pm: {left_in_battery_kWhrs4b:.2f}kWhrs")
+
+            new_batt_percent4b = round(left_in_battery_kWhrs4b / max_batt_kWhr * 100)
+
+            if DEBUG >= 1:
+                print(f"The Battery capacity at {(be_end.hour - 12)}pm could be: {new_batt_percent4b}%")
+
+        if DEBUG >= 1:
             print()
 
     if charge_rate < 1:
         charge_rate = 1
 
-    if charge_rate > max_charge_rate * 1000:
-        charge_rate = max_charge_rate * 1000
+    if charge_rate > charge_rate_limit * 1000:
+        charge_rate = charge_rate_limit * 1000
 
     charge_rate = int(charge_rate)
 
     if excess_kWhrs3 > 0:
-        excess_kWhrs = excess_kWhrs3
+        excess_Whrs = excess_kWhrs3 * 1000
     elif excess_kWhrs4 > 0:
-        excess_kWhrs = excess_kWhrs4
+        excess_Whrs = excess_kWhrs4 * 1000
 
-    new_periods = generate_periods(now, charge_rate, excess_kWhrs)
+    house_load1 = max_kWhrs3 * 1000
+    house_load2 = max_kWhrs4 * 1000
+
+    new_periods = generate_periods(now, charge_rate, excess_Whrs, house_load1, house_load2)
 
     if not upload_schedule:
         pprint(new_periods)
@@ -1279,6 +1382,7 @@ if __name__ == "__main__":
 
     max_charge_rate = configParser.getfloat("Defaults", "max_charge_rate", fallback = 5)
     max_discharge_rate = configParser.getfloat("Defaults", "max_discharge_rate", fallback = 5)
+    charge_rate_limit = configParser.getfloat("Defaults", "charge_rate", fallback = 10)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
 
@@ -1382,8 +1486,8 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
     UTC_TZ = ZoneInfo("UTC")
 
-    #now = datetime.now(LOCAL_TZ)
-    now = datetime(2026, 3, 7, 8, 0, 0, tzinfo=LOCAL_TZ)
+    now = datetime.now(LOCAL_TZ)
+    #now = datetime(2026, 3, 7, 8, 0, 0, tzinfo=LOCAL_TZ)
 
     actual_fp_start = datetime.combine(now.date(), time(fp_start_hour), tzinfo=LOCAL_TZ)
     actual_fp_end = datetime.combine(now.date(), time(fp_end_hour), tzinfo=LOCAL_TZ)
@@ -1413,25 +1517,27 @@ if __name__ == "__main__":
         print(f"drop_off_angle: {drop_off_angle}")
         print(f"solar_dropoff: {solar_dropoff.time()}")
 
+    now_really = datetime.now(LOCAL_TZ)
+
     # Scheduled download times
     SOLCAST_SCHEDULED_TIMES = [
-        datetime.combine(now.date(), time(11, 0, 30), tzinfo=LOCAL_TZ),
-        datetime.combine(now.date(), time(12, 0, 30), tzinfo=LOCAL_TZ),
-        datetime.combine(now.date(), time(13, 0, 30), tzinfo=LOCAL_TZ),
-        datetime.combine(now.date(), time(13, 30, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now_really.date(), time(11, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now_really.date(), time(12, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now_really.date(), time(13, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now_really.date(), time(13, 30, 30), tzinfo=LOCAL_TZ),
     ]
 
     if be_start is None or solar_dropoff < be_start:
-        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(12, 30, 30), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now_really.date(), time(12, 30, 30), tzinfo=LOCAL_TZ)])
     else:
-        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now.date(), time(18, 0, 30), tzinfo=LOCAL_TZ)])
+        SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now_really.date(), time(18, 0, 30), tzinfo=LOCAL_TZ)])
 
     SOLCAST_SCHEDULED_TIMES.sort()
 
     FSOLAR_SCHEDULED_TIMES = []
     for hour in range(0, 19):
         for minute in [0, 30]:
-            new_time = datetime.combine(now.date(), time(hour, minute, 30), tzinfo=LOCAL_TZ)
+            new_time = datetime.combine(now_really.date(), time(hour, minute, 30), tzinfo=LOCAL_TZ)
 
             if new_time < solar_dropoff:
                 FSOLAR_SCHEDULED_TIMES.extend([new_time])

@@ -266,7 +266,9 @@ def generate_periods(now, charge_rate, discharge_amount, house_load1, house_load
 
     import_fdPwr = int(charge_rate_limit * 1000)
     export_fdPwr = int(be_max_rate_kW * 1000)
-    export_fdPwr2 = int(nbe_max_rate_kW * 1000)
+
+    if nbe_max_rate_kW is not None:
+        export_fdPwr2 = int(nbe_max_rate_kW * 1000)
 
     periods.extend([{"enable": 1,
                      "startHour": 0,
@@ -794,6 +796,9 @@ def get_BOM_hourly(now, start_time, end_time):
     return {"with": (fp_period + hours_without), "without": hours_without, "period": fp_period}
 
 def sanitise_percent(percent, can_be_zero):
+
+    if percent is None or can_be_zero is None:
+        return None
 
     if can_be_zero and percent < 0:
         percent = 0
@@ -1466,11 +1471,11 @@ if __name__ == "__main__":
 
     nbe_start_hour = configParser.getint("NextBestExportTime", "start_hour", fallback = None)
     nbe_end_hour = configParser.getint("NextBestExportTime", "end_hour", fallback = None)
-    nbe_max_rate_kW = configParser.getfloat("NextBestExportTime", "max_rate_kW", fallback = 5)
-    nbe_min_rate_kW = configParser.getfloat("NextBestExportTime", "min_rate_kW", fallback = 3)
+    nbe_max_rate_kW = configParser.getfloat("NextBestExportTime", "max_rate_kW", fallback = None)
+    nbe_min_rate_kW = configParser.getfloat("NextBestExportTime", "min_rate_kW", fallback = None)
     nbe_percent = sanitise_percent(configParser.getint("NextBestExportTime", "discharge_percent", fallback = 70), False)
-    nbe_fit = configParser.getfloat("NextBestExportTime", "fit_rate", fallback = 0.06)
-    nbe_discharge_percent = sanitise_percent(configParser.getint("NextBestExportTime", "discharge_percent", fallback = 80), False)
+    nbe_fit = configParser.getfloat("NextBestExportTime", "fit_rate", fallback = None)
+    nbe_discharge_percent = sanitise_percent(configParser.getint("NextBestExportTime", "discharge_percent", fallback = None), False)
 
     if nbe_start_hour is not None and nbe_end_hour is not None:
 

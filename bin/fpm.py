@@ -14,6 +14,7 @@ import math
 import openapi
 import os
 import pickle
+import re
 import requests
 import sys
 
@@ -814,35 +815,6 @@ def get_BOM_hourly(now, start_time, end_time):
 
     return {"with": (fp_period + hours_without), "without": hours_without, "period": fp_period}
 
-def sanitise_percent(percent, can_be_zero):
-
-    if percent is None or can_be_zero is None:
-        return None
-
-    if can_be_zero and percent < 0:
-        percent = 0
-
-    if not can_be_zero and percent < 10:
-        percent = 10
-
-    if percent > 100:
-        percent = 100
-
-    return int(percent)
-
-def sanitise_kWhr(value, can_be_zero):
-
-    if can_be_zero and value < 0:
-        value = 0
-
-    if not can_be_zero and value < 0.1:
-        value = 0.1
-
-    if value > 10:
-        value = 10
-
-    return value
-
 def get_elevation_time(observer, angle, target_date, direction):
 
     t = sun.time_at_elevation(observer, angle, date=target_date, direction=direction, tzinfo=LOCAL_TZ)
@@ -887,6 +859,67 @@ def make_apicall(endpoint, api_arg1=None, arg2=None):
         print(str(e))
         sys.exit()
 
+def calc_export(now, start_time, end_time, data):
+
+    end_time += timedelta(minutes=5)
+
+    # Parse timestamps
+    parsed = {
+        datetime.strptime(re.sub(r'[ A-Za-z]', '', v["time"]), "%Y-%m-%d%H:%M:%S%z").astimezone(LOCAL_TZ): v["value"]
+        for v in data
+    }
+
+    # Find values for today only
+    today_data = {dt: v for dt, v in parsed.items() if start_time <= dt < end_time}
+
+    start_kWh = None
+    end_kWh = None
+    for dt, kWh in today_data.items():
+
+        if start_kWh is None:
+            start_kWh = kWh
+
+        end_kWh = kWh
+
+    sent_kWh = end_kWh - start_kWh
+
+    if DEBUG >= 3:
+        print(f"start_kWh: {start_kWh:.1f}kWhrs")
+        print(f"end_kWh: {end_kWh:.1f}kWhrs")
+        print(f"sent_kWh: {sent_kWh:.1f}kWhrs")
+
+    return sent_kWh
+
+def add_up(now, data):
+
+    be_export = calc_export(now, be_start, be_end, data)
+
+    after_limit_kWh = 0
+    if be_export > be_max_kWh:
+        after_limit_kWh = export1 - be_max_kW
+        be_export = be_max_kW
+
+    if nbe_start1 is not None and nbe_end1 is not None:
+        export1 = calc_export(now, nbe_start1, nbe_end1, data)
+
+    if nbe_start is not None and nbe_end is not None:
+        export2 = calc_export(now, nbe_start, nbe_end, data)
+
+    earn = be_export * be_fit + after_limit_kWh * be_remainder_fit + export1 * nbe_fit + export2 * nbe_fit
+
+    if DEBUG >= 1:
+         print(f"be_export: {be_export:.1f}kWh")
+         print(f"be_fit: ${be_fit:.2f}")
+         print(f"after_limit_kWh: {after_limit_kWh:.1f}kWh")
+         print(f"be_remainder_fit: ${be_remainder_fit:.2f}")
+         print(f"export1: {export1:.1f}kWh")
+         print(f"export2: {export2:.1f}kWh")
+         print(f"nbe_fit: ${nbe_fit:.2f}")
+         print(f"earn: ${earn:.2f}")
+         print()
+
+    return earn
+
 def main():
 
     global min_grid_export_kWhr
@@ -908,6 +941,10 @@ def main():
         for row in history:
 
             if row["unit"] != "kWh":
+                continue
+
+            if row["variable"] == "feedin":
+                earn = add_up(now, row["data"])
                 continue
 
             min = max = None
@@ -945,12 +982,12 @@ def main():
         curr_kWhr = batt["residual"]
 
     else:
-        max_batt_kWhr = 42
+        max_batt_kWhr = 41.94
         curr_kWhr = 21
         gen_kWhr = 0
 
 
-    curr_percent = round(curr_kWhr / max_batt_kWhr * 100.00)
+    curr_percent = round(curr_kWhr / max_batt_kWhr * 100)
 
     min_grid_kWhr = round(max_batt_kWhr * min_grid_percent / 100, 2)
     charge_kWhr = round(max_batt_kWhr * charge_percent / 100, 2)
@@ -1016,13 +1053,13 @@ def main():
 
         if forecast1 is not None:
             forecast1_dict = get_wh_total(now, forecast1)
-            rest_of_today_kWhr1 = round(forecast1_dict["without"] / 1000.00, 2)
-            rest_of_today_kWhr1a = round(forecast1_dict["period"] / 1000.00, 2)
+            rest_of_today_kWhr1 = round(forecast1_dict["without"] / 1000, 2)
+            rest_of_today_kWhr1a = round(forecast1_dict["period"] / 1000, 2)
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(now, forecast2)
-            rest_of_today_kWhr2 = round(forecast2_dict["without"] / 1000.00, 2)
-            rest_of_today_kWhr2a = round(forecast2_dict["period"] / 1000.00, 2)
+            rest_of_today_kWhr2 = round(forecast2_dict["without"] / 1000, 2)
+            rest_of_today_kWhr2a = round(forecast2_dict["period"] / 1000, 2)
 
         if (forecast1 is not None or forecast2 is not None) and DEBUG >= 1:
 
@@ -1039,13 +1076,13 @@ def main():
 
         if forecast3 is not None:
             forecast3_dict = get_wh_total2(now, forecast3)
-            rest_of_today_kWhr3 = round(forecast3_dict["without"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr3a = round(forecast3_dict["period"] * fsolar_degredation2 / 1000.00, 2)
+            rest_of_today_kWhr3 = round(forecast3_dict["without"] * fsolar_degredation2 / 1000, 2)
+            rest_of_today_kWhr3a = round(forecast3_dict["period"] * fsolar_degredation2 / 1000, 2)
 
         if forecast4 is not None:
             forecast4_dict = get_wh_total2(now, forecast4)
-            rest_of_today_kWhr4 = round(forecast4_dict["without"] * fsolar_degredation2 / 1000.00, 2)
-            rest_of_today_kWhr4a = round(forecast4_dict["period"] * fsolar_degredation2 / 1000.00, 2)
+            rest_of_today_kWhr4 = round(forecast4_dict["without"] * fsolar_degredation2 / 1000, 2)
+            rest_of_today_kWhr4a = round(forecast4_dict["period"] * fsolar_degredation2 / 1000, 2)
 
         if (forecast3 is not None or forecast4 is not None) and DEBUG >= 1:
 
@@ -1343,6 +1380,33 @@ def main():
             print(f"The Battery capacity at {nbe_end.strftime(output_time_format).lower()} could be: {new_batt_percent4}%")
             print()
 
+    tom = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    before_midnight = tom - timedelta(microseconds=1)
+
+    if now <= before_midnight:
+        if last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://"):
+            forecast1 = get_json("solcast1")
+
+        if last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://"):
+            forecast2 = get_json("solcast2")
+
+        rest_of_today_kWhr1 = 0
+        if forecast1 is not None:
+            forecast1_dict = get_wh_total(tom, forecast1)
+            rest_of_today_kWhr1 = round(forecast1_dict["without"] / 1000, 2)
+
+        rest_of_today_kWhr2 = 0
+        if forecast2 is not None:
+            forecast2_dict = get_wh_total(tom, forecast2)
+            rest_of_today_kWhr2 = round(forecast2_dict["without"] / 1000, 2)
+
+        if (forecast1 is not None or forecast2 is not None) and DEBUG >= 1:
+
+            print(f"Solcast forecast for tomorrow (excluding {actual_fp_start.strftime(output_time_format).lower()} to {actual_fp_end.strftime(output_time_format).lower()}): {(rest_of_today_kWhr1 + rest_of_today_kWhr2):.2f}kWhrs")
+            print()
+
+        #work out tom prod forecast...
+
     start_time = be_end
     if nbe_start is not None and nbe_end is not None:
         start_time = nbe_end
@@ -1367,11 +1431,13 @@ def main():
     if left_in_battery_kWhrs > max_batt_kWhr:
          left_in_battery_kWhrs = max_batt_kWhr
 
+    after_import = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
+
     if DEBUG >= 1:
         if now.date() == solar_start_next.date():
-            print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs}")
+            print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs}kWhrs/{after_import}%")
         else:
-            print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWh")
+            print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWh/{after_import}%")
 
     excess_kWhrs = left_in_battery_kWhrs - discharge_kWhr
 
@@ -1477,19 +1543,19 @@ if __name__ == "__main__":
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
 
-    charge_percent = sanitise_percent(configParser.getint("Defaults", "charge_percent", fallback = 80), False)
-    min_grid_percent = sanitise_percent(configParser.getint("Defaults", "min_grid_percent", fallback = 10), False)
-    discharge_percent = sanitise_percent(configParser.getint("Defaults", "discharge_percent", fallback = 70), False)
+    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85)
+    min_grid_percent = configParser.getfloat("Defaults", "min_grid_percent", fallback = 10)
+    discharge_percent = configParser.getfloat("Defaults", "discharge_percent", fallback = 40)
 
-    house_usage = sanitise_kWhr(configParser.getfloat("Defaults", "average_usage", fallback = 0.6), False)
+    house_usage = configParser.getfloat("Defaults", "average_usage", fallback = 0.6)
 
-    aircon_usage = sanitise_kWhr(configParser.getfloat("Defaults", "aircon_usage", fallback = 0.6), True)
+    aircon_usage = configParser.getfloat("Defaults", "aircon_usage", fallback = 0.3)
     aircon_cool_temp = configParser.getfloat("Defaults", "aircon_cool_temp", fallback = 26)
     aircon_heat_temp = configParser.getfloat("Defaults", "aircon_heat_temp", fallback = 23)
 
     tz = configParser.get("Defaults", "timezone", fallback = "UTC")
-    lat = configParser.getfloat("Defaults", "lat", fallback = 0.0)
-    lon = configParser.getfloat("Defaults", "lon", fallback = 0.0)
+    lat = configParser.getfloat("Defaults", "lat", fallback = 0)
+    lon = configParser.getfloat("Defaults", "lon", fallback = 0)
     start_angle = configParser.getfloat("Defaults", "start_angle", fallback = 22.5)
     drop_off_angle = configParser.getfloat("Defaults", "drop_off_angle", fallback = 22.5)
 
@@ -1535,9 +1601,9 @@ if __name__ == "__main__":
     be_end_hour = configParser.getint("BestExportTime", "end_hour", fallback = None)
     be_max_rate_kW = configParser.getfloat("BestExportTime", "max_rate_kW", fallback = 5)
     be_min_rate_kW = configParser.getfloat("BestExportTime", "min_rate_kW", fallback = 3)
-    be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
     be_max_kWh = configParser.getfloat("BestExportTime", "max_kWh_at_high_fit", fallback = 10)
-    be_fallback_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.06)
+    be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
+    be_remainder_fit = configParser.getfloat("BestExportTime", "remainder_fit", fallback = 0.06)
 
     if be_start_hour is not None and be_end_hour is not None:
 
@@ -1557,8 +1623,10 @@ if __name__ == "__main__":
             print(f"You set the best export time to overlap with the free power time.")
             sys.exit()
 
-    nbe_start_hour = configParser.getint("NextBestExportTime", "start_hour", fallback = None)
-    nbe_end_hour = configParser.getint("NextBestExportTime", "end_hour", fallback = None)
+    nbe_start_hour1 = configParser.getint("NextBestExportTime", "start_hour1", fallback = None)
+    nbe_end_hour1 = configParser.getint("NextBestExportTime", "end_hour1", fallback = None)
+    nbe_start_hour = configParser.getint("NextBestExportTime", "start_hour2", fallback = None)
+    nbe_end_hour = configParser.getint("NextBestExportTime", "end_hour2", fallback = None)
     nbe_max_rate_kW = configParser.getfloat("NextBestExportTime", "max_rate_kW", fallback = None)
     nbe_min_rate_kW = configParser.getfloat("NextBestExportTime", "min_rate_kW", fallback = None)
     nbe_fit = configParser.getfloat("NextBestExportTime", "fit_rate", fallback = None)
@@ -1622,6 +1690,11 @@ if __name__ == "__main__":
         be_start = datetime.combine(now.date(), time(be_start_hour), tzinfo=LOCAL_TZ)
         be_end = datetime.combine(now.date(), time(be_end_hour), tzinfo=LOCAL_TZ)
 
+    nbe_start1 = nbe_end1 = None
+    if nbe_start_hour1 is not None and nbe_end_hour1 is not None:
+        nbe_start1 = datetime.combine(now.date(), time(nbe_start_hour1), tzinfo=LOCAL_TZ)
+        nbe_end1 = datetime.combine(now.date(), time(nbe_end_hour1), tzinfo=LOCAL_TZ)
+
     nbe_start = nbe_end = None
     if nbe_start_hour is not None and nbe_end_hour is not None:
         nbe_start = datetime.combine(now.date(), time(nbe_start_hour), tzinfo=LOCAL_TZ)
@@ -1631,7 +1704,7 @@ if __name__ == "__main__":
 
     solar_start = get_elevation_time(observer, start_angle, now.date(), SunDirection.RISING)
     solar_start_next = solar_start + timedelta(days=1)
-    solar_dropoff = get_elevation_time(observer, start_angle, now.date(), SunDirection.SETTING)
+    solar_dropoff = get_elevation_time(observer, drop_off_angle, now.date(), SunDirection.SETTING)
 
     if DEBUG >= 2:
         print(f"start_angle: {start_angle}")

@@ -251,8 +251,9 @@ def get_result(fn, response, error_code):
         response.raise_for_status()
 
         result = response.json().get("result")
+        errno = response.json().get("errno")
 
-        if result is not None:
+        if result is not None or (errno is not None and errno == 0):
             return result
 
     errno = response.json().get("errno")

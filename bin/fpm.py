@@ -1261,13 +1261,13 @@ def main():
              left_in_battery_kWhrs = max_batt_kWhr
 
         if DEBUG >= 1:
-            print(f"curr_kWhr: {curr_kWhr:.2f}kWhrs")
             print(f"left_in_battery_kWhrs at {be_end.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs")
 
         new_batt_percent3 = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
 
         if DEBUG >= 1:
-            print(f"The Battery capacity at {be_start.strftime(output_time_format).lower()} could be: {new_batt_percent3}%")
+            print(f"The Battery capacity at {be_end.strftime(output_time_format).lower()} could be: {new_batt_percent3}%")
+            print()
 
     if nbe_start is not None and nbe_end is not None and now < nbe_end:
 
@@ -1335,16 +1335,13 @@ def main():
              left_in_battery_kWhrs = max_batt_kWhr
 
         if DEBUG >= 1:
-            print(f"curr_kWhr: {curr_kWhr:.2f}kWhrs")
-            print(f"left_in_battery_kWhrs at {be_end.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs")
+            print(f"left_in_battery_kWhrs at {nbe_end.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs")
 
         new_batt_percent4 = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
 
         if DEBUG >= 1:
-            print(f"The Battery capacity at {nbe_start.strftime(output_time_format).lower()} could be: {new_batt_percent4}%")
-
-    if DEBUG >= 1:
-        print()
+            print(f"The Battery capacity at {nbe_end.strftime(output_time_format).lower()} could be: {new_batt_percent4}%")
+            print()
 
     start_time = be_end
     if nbe_start is not None and nbe_end is not None:

@@ -865,7 +865,7 @@ def make_apicall(endpoint, api_arg1=None, arg2=None):
         if endpoint == "history" and api_arg1 is not None:
             ret = openapi.get_history(api_arg1)
 
-        if endpoint == "history":
+        if endpoint == "history" and api_arg1 is None:
             ret = openapi.get_history()
 
         if endpoint == "battery":
@@ -877,7 +877,7 @@ def make_apicall(endpoint, api_arg1=None, arg2=None):
         if endpoint == "set_schedules" and api_arg1 is None:
             return None
 
-        if endpoint == "set_schedules":
+        if endpoint == "set_schedules" and api_arg1 is not None:
             ret = openapi.set_schedule(api_arg1)
 
         return ret
@@ -914,13 +914,17 @@ def main():
             for row2 in row["data"]:
 
                 val = row2["value"];
-                if min is None or (val > 0 and val < min):
+
+                if min is None or val < min:
                     min = val
 
-                if max is None or (val > 0 and val > max):
+                if max is None or val > max:
                     max = val
 
-            diff = max - min
+            if min is not None and max is not None:
+                diff = max - min
+            else:
+                diff = 0
 
             if DEBUG >= 3:
                 print(f"variable: {row['variable']}")
@@ -950,13 +954,16 @@ def main():
 
     min_grid_kWhr = round(max_batt_kWhr * min_grid_percent / 100, 2)
     charge_kWhr = round(max_batt_kWhr * charge_percent / 100, 2)
-    be_kWhr = round(max_batt_kWhr * be_percent / 100, 2)
-    nbe_kWhr = round(max_batt_kWhr * nbe_percent / 100, 2)
+    discharge_kWhr = round(max_batt_kWhr * discharge_percent / 100, 2)
 
     if DEBUG >= 1:
         print(f"max_batt_kWhr: {max_batt_kWhr:.2f}kWhrs")
 
         print(f"min_grid_kWhr: {min_grid_kWhr:.2f}kWhrs")
+
+        print(f"gen_kWhr: {gen_kWhr:.2f}kWhrs")
+
+        print()
 
         print(f"curr_percent: {curr_percent}%")
         print(f"curr_kWhr: {curr_kWhr:.2f}kWhrs")
@@ -964,13 +971,8 @@ def main():
         print(f"charge_percent: {charge_percent}%")
         print(f"charge_kWhr: {charge_kWhr:.2f}kWhrs")
 
-        print(f"be_percent: {be_percent}%")
-        print(f"be_kWhr: {be_kWhr:.2f}kWhrs")
-
-        print(f"nbe_percent: {nbe_percent}%")
-        print(f"nbe_kWhr: {nbe_kWhr:.2f}kWhrs")
-
-        print(f"gen_kWhr: {gen_kWhr:.2f}kWhrs")
+        print(f"discharge_percent: {discharge_percent}%")
+        print(f"discharge_kWhr: {discharge_kWhr:.2f}kWhrs")
 
         print()
 
@@ -1374,11 +1376,9 @@ def main():
         else:
             print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWh")
 
-    excess_kWhrs = 0
-    if now < be_end:
+    excess_kWhrs = left_in_battery_kWhrs - discharge_kWhr
 
-        excess_kWhrs = left_in_battery_kWhrs - be_kWhr
-
+    if excess_kWhrs != 0:
         if DEBUG >= 1:
 
             print()
@@ -1482,6 +1482,7 @@ if __name__ == "__main__":
 
     charge_percent = sanitise_percent(configParser.getint("Defaults", "charge_percent", fallback = 80), False)
     min_grid_percent = sanitise_percent(configParser.getint("Defaults", "min_grid_percent", fallback = 10), False)
+    discharge_percent = sanitise_percent(configParser.getint("Defaults", "discharge_percent", fallback = 70), False)
 
     house_usage = sanitise_kWhr(configParser.getfloat("Defaults", "average_usage", fallback = 0.6), False)
 
@@ -1537,7 +1538,6 @@ if __name__ == "__main__":
     be_end_hour = configParser.getint("BestExportTime", "end_hour", fallback = None)
     be_max_rate_kW = configParser.getfloat("BestExportTime", "max_rate_kW", fallback = 5)
     be_min_rate_kW = configParser.getfloat("BestExportTime", "min_rate_kW", fallback = 3)
-    be_percent = sanitise_percent(configParser.getint("BestExportTime", "discharge_percent", fallback = 70), False)
     be_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.15)
     be_max_kWh = configParser.getfloat("BestExportTime", "max_kWh_at_high_fit", fallback = 10)
     be_fallback_fit = configParser.getfloat("BestExportTime", "fit_rate", fallback = 0.06)
@@ -1564,9 +1564,7 @@ if __name__ == "__main__":
     nbe_end_hour = configParser.getint("NextBestExportTime", "end_hour", fallback = None)
     nbe_max_rate_kW = configParser.getfloat("NextBestExportTime", "max_rate_kW", fallback = None)
     nbe_min_rate_kW = configParser.getfloat("NextBestExportTime", "min_rate_kW", fallback = None)
-    nbe_percent = sanitise_percent(configParser.getint("NextBestExportTime", "discharge_percent", fallback = 70), False)
     nbe_fit = configParser.getfloat("NextBestExportTime", "fit_rate", fallback = None)
-    nbe_discharge_percent = sanitise_percent(configParser.getint("NextBestExportTime", "discharge_percent", fallback = None), False)
 
     if nbe_start_hour is not None and nbe_end_hour is not None:
 

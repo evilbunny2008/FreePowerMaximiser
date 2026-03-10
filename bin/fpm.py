@@ -426,6 +426,9 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
         if DEBUG >= 3:
             print(f"discharge_amount2: {discharge_amount2}")
 
+    if discharge_amount2 < 500:
+        discharge_amount2 = 0
+
     if start_time == be_start and DEBUG >= 1:
         print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
     elif DEBUG >= 1:
@@ -1028,7 +1031,7 @@ def main():
     charge_kWhr = round(max_batt_kWhr * charge_percent / 100, 2)
     discharge_kWhr = round(max_batt_kWhr * discharge_percent / 100, 2)
 
-    if DEBUG >= 1:
+    if DEBUG >= 2:
         print(f"max_batt_kWhr: {max_batt_kWhr:.2f}kWhrs")
 
         print(f"min_grid_kWhr: {min_grid_kWhr:.2f}kWhrs")
@@ -1507,8 +1510,7 @@ def main():
             else:
                 print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs/{after_import}%")
 
-    if DEBUG >= 1:
-        print()
+            print()
 
     if charge_rate < 1:
         charge_rate = 1
@@ -1521,8 +1523,8 @@ def main():
     new_periods = generate_periods(now, charge_rate, excess_kWhrs * 1000, house_rate3 * 1000, house_rate4 * 1000, earning)
 
     if not upload_schedule:
-        print()
         pprint(new_periods)
+        print()
         sys.exit()
 
     if not SkipAPI:
@@ -1531,23 +1533,21 @@ def main():
         if DEBUG >= 3:
             print("curr_periods:")
             pprint(curr_periods)
-
             print()
 
             print("new_periods:")
             pprint(new_periods)
+            print()
 
         if check_periods(curr_periods, new_periods):
             ret = make_apicall("set_schedules", new_periods)
             print("Successfully uploaded new periods...")
 
             if DEBUG >= 3:
-                print()
                 pprint(ret)
                 print()
 
         elif DEBUG >= 1:
-            print()
             print("The new periods match the old periods... skipping uploading new periods...")
             print()
 

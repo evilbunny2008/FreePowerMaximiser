@@ -34,8 +34,6 @@ os.makedirs(cache_dir, exist_ok=True)
 BOM_geohash_filename = os.path.join(cache_dir, "bom-geohash.txt")
 BOM_filename = os.path.join(cache_dir, "bom.json")
 
-min_grid_export_kWhr = 3
-
 last_download_filename = os.path.join(cache_dir, "last_download.pkl")
 
 last_download = {
@@ -58,7 +56,10 @@ def save_last_download():
         with open(last_download_filename, "wb") as f:
             pickle.dump(last_download, f)
     except Exception as e:
-        print(f"Error writting pickle cache file '{last_download_filename}', e: {str(e)}")
+
+        #print(f"Error writting pickle cache file '{last_download_filename}', e: {str(e)}")
+
+        raise e
 
 def should_download_now(schedule_time, filename):
     """
@@ -113,7 +114,9 @@ def perform_download(url, filename):
         if DEBUG >= 1:
             print(f"Download failed! e: {str(e)}")
 
-        return {"success": False, "code": -2, "error": "nothing returned", "result": None}
+        #return {"success": False, "code": -2, "error": "nothing returned", "result": None}
+
+        raise e
 
 def get_wh_total(now, solcast_data):
 
@@ -255,7 +258,7 @@ def day_name(days_ahead):
     target = datetime.now(LOCAL_TZ) + timedelta(days=days_ahead)
     return target.strftime("%A")  # e.g. "Monday"
 
-def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate4):
+def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate4, earning):
 
     periods = []
 
@@ -323,78 +326,6 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
 
         return periods
 
-    start_time = be_start
-    if start_time < now:
-        start_time = now
-
-    max_hours = (be_end - start_time).total_seconds() / 3600
-
-    max_rate = be_max_rate_kW * 1000 - house_rate3
-    if max_rate > max_discharge_rate * 1000 - house_rate3:
-        max_rate = max_discharge_rate * 1000 - house_rate3
-
-    max_amount = int(max_rate * max_hours)
-
-    if DEBUG >= 3:
-        print(f"max_hours: {max_hours}")
-        print(f"max_rate: {max_rate}")
-        print(f"max_amount: {max_amount}")
-        print(f"house_rate3: {house_rate3}")
-
-    discharge_amount = int(discharge_amount)
-
-    discharge_time_secs = int(math.ceil(discharge_amount / max_rate * 60) * 60)
-
-    if DEBUG >= 3:
-        print(f"discharge_amount: {discharge_amount}")
-        print(f"discharge_time_secs: {discharge_time_secs}")
-
-    end_time = start_time + timedelta(seconds=discharge_time_secs)
-
-    if DEBUG >= 3:
-        print(f"end_time: {end_time}")
-
-    if end_time > be_end:
-        end_time = be_end
-
-    if DEBUG >= 3:
-        print(f"end_time: {end_time}")
-
-    max_hours = math.ceil((end_time - start_time).total_seconds() / 60) / 60
-
-    max_amount = int(max_rate * max_hours)
-
-    if DEBUG >= 3:
-        print(f"max_hours: {max_hours:.2f}")
-        print(f"max_rate: {max_rate}")
-        print(f"max_amount: {max_amount}")
-        print(f"discharge_amount: {discharge_amount}")
-
-    discharge_amount2 = 0
-    if discharge_amount > be_max_kWh * 1000:
-        discharge_amount2 = discharge_amount - be_max_kWh * 1000
-        discharge_amount = be_max_kWh * 1000
-
-    if DEBUG >= 3:
-        print(f"discharge_amount: {discharge_amount}")
-        print(f"discharge_amount2: {discharge_amount2}")
-
-    if discharge_amount > max_amount:
-        discharge_amount2 += discharge_amount - max_amount
-        discharge_amount = max_amount
-
-    if DEBUG >= 3:
-        print(f"discharge_amount: {discharge_amount}")
-        print(f"discharge_amount2: {discharge_amount2}")
-
-    earn1 = discharge_amount / 1000 * be_fit
-    #earn1 += discharge_amount2 / 1000 * be_fallback_fit
-
-    if start_time == be_start:
-        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
-    else:
-        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between now and {be_end.strftime(output_time_format).lower()}")
-
     periods.extend([{"enable": 1,
                      "startHour": fp_end.hour,
                      "startMinute": fp_end.minute,
@@ -409,6 +340,96 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
                      "workMode": "SelfUse"}])
+
+    start_time = be_start
+    if start_time < now:
+        start_time = now
+
+    max_hours = (be_end - start_time).total_seconds() / 3600
+
+    max_rate = be_max_rate_kW * 1000 - house_rate3
+    if max_rate > max_discharge_rate * 1000 - house_rate3:
+        max_rate = max_discharge_rate * 1000 - house_rate3
+
+    max_amount = int(max_rate * max_hours)
+
+    if DEBUG >= 1:
+        print(f"max_hours: {max_hours}")
+        print(f"max_rate: {max_rate}")
+        print(f"max_amount: {max_amount}")
+        print(f"house_rate3: {house_rate3}")
+
+    discharge_amount = int(discharge_amount)
+
+    discharge_time_secs = int(math.ceil(discharge_amount / max_rate * 60) * 60)
+
+    if DEBUG >= 1:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"discharge_time_secs: {discharge_time_secs}")
+
+    end_time = start_time + timedelta(seconds=discharge_time_secs)
+
+    if DEBUG >= 1:
+        print(f"end_time: {end_time}")
+
+    if end_time > be_end:
+        end_time = be_end
+
+    if DEBUG >= 1:
+        print(f"end_time: {end_time}")
+
+    discharge_amount2 = 0
+    if discharge_amount > be_max_kWh * 1000:
+        discharge_amount2 = discharge_amount - be_max_kWh * 1000
+        discharge_amount = be_max_kWh * 1000
+
+    if DEBUG >= 1:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"discharge_amount2: {discharge_amount2}")
+
+    if discharge_amount > max_amount:
+        discharge_amount2 += discharge_amount - max_amount
+        discharge_amount = max_amount
+
+    if DEBUG >= 1:
+        print(f"discharge_amount: {discharge_amount}")
+        print(f"discharge_amount2: {discharge_amount2}")
+
+    earn1 = discharge_amount / 1000 * be_fit
+
+    if DEBUG >= 1:
+        print(f"price_target: {price_target}")
+        print(f"earning: {earning}")
+        print(f"earn1: {earn1}")
+
+    earn2 = discharge_amount2 / 1000 * be_remainder_fit
+
+    if DEBUG >= 1:
+        print(f"earn2: {earn2}")
+
+    if earning + earn1 >= price_target:
+        discharge_amount2 = 0
+    elif discharge_amount2 > 0:
+        new_target = (price_target - earning - earn1) * 1000 / be_remainder_fit
+
+        if DEBUG >= 1:
+            print(f"new_target: {new_target}")
+
+        if new_target > discharge_amount2:
+            new_target = discharge_amount2
+
+        if DEBUG >= 1:
+            print(f"new_target: {new_target}")
+
+        discharge_amount2 = new_target
+
+        if DEBUG >= 1:
+            print(f"discharge_amount2: {discharge_amount2}")
+
+    if start_time == be_start and DEBUG >= 1:
+        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
+    elif DEBUG >= 1:
+        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between now and {be_end.strftime(output_time_format).lower()}")
 
     periods.extend([{"enable": 1,
                      "startHour": be_start.hour,
@@ -638,7 +659,7 @@ def get_json(which_forecast):
         shown_error = False
 
         if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-           (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=30) or \
+           (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=25) or \
            (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
             last_download[which_forecast]["last_attempt_time"] = now_really
@@ -665,12 +686,12 @@ def get_json(which_forecast):
         if schedule_time <= now_really and should_download_now(schedule_time, filename):
 
             if (last_attempt_time is None or last_attempt_time < now_really - timedelta(minutes=10)) and \
-               (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=15) or \
+               (last_successful_time is None or last_successful_time < now_really - timedelta(minutes=25) or \
                (last_attempt_time is not None and last_successful_time is not None and last_attempt_time > last_successful_time)):
 
                 if DEBUG >= 2:
                     print(f"schedule_time is less than now_really: {now_really}")
-                    print(f"\n→ Time for {schedule_time.strftime('%H:%M')} download")
+                    print(f"→ Time for {schedule_time.strftime('%H:%M')} download")
 
                 last_download[which_forecast]["last_attempt_time"] = now_really
                 ret = perform_download(url, filename)
@@ -689,6 +710,9 @@ def get_json(which_forecast):
 
                 if ret.get("result") is None:
                     break
+
+                if DEBUG >= 1:
+                    print()
 
                 last_download[which_forecast]["last_successful_time"] = now_really
                 return ret.get("result")
@@ -717,7 +741,7 @@ def get_BOM_geohash(lat, lon):
             with open(BOM_geohash_filename, "r") as f:
                 ret = f.read()
 
-                if ret is not None and len(ret) == 6:
+                if ret is not None:
                     return {"success": True, "code": None, "error": None, "geohash": ret}
 
     except Exception as e:
@@ -827,27 +851,28 @@ def get_elevation_time(observer, angle, target_date, direction):
 
     return t
 
-def make_apicall(endpoint, api_arg1=None, arg2=None):
+def make_apicall(endpoint, api_arg1=None, api_arg2=None):
+
+    ret = None
 
     if SkipAPI:
-        return None
+        return ret
 
     try:
 
-        if endpoint == "history" and api_arg1 is not None:
-            ret = openapi.get_history(api_arg1)
-
-        if endpoint == "history" and api_arg1 is None:
-            ret = openapi.get_history()
+        if endpoint == "history":
+            if api_arg1 is not None and api_arg2 is not None:
+                ret = openapi.get_history(api_arg1, d=str(api_arg2.date()))
+            elif api_arg1 is not None:
+                ret = openapi.get_history(api_arg1)
+            else:
+                ret = openapi.get_history()
 
         if endpoint == "battery":
             ret = openapi.get_battery()
 
         if endpoint == "get_schedules":
             ret = openapi.get_schedule()["periods"]
-
-        if endpoint == "set_schedules" and api_arg1 is None:
-            return None
 
         if endpoint == "set_schedules" and api_arg1 is not None:
             ret = openapi.set_schedule(api_arg1)
@@ -856,10 +881,11 @@ def make_apicall(endpoint, api_arg1=None, arg2=None):
 
     except Exception as e:
 
-        print(str(e))
-        sys.exit()
+        raise e
+        #print(f"Error!: {str(e)}")
+        #sys.exit()
 
-def calc_export(now, start_time, end_time, data):
+def calc_export(start_time, end_time, data):
 
     end_time += timedelta(minutes=5)
 
@@ -872,6 +898,7 @@ def calc_export(now, start_time, end_time, data):
     # Find values for today only
     today_data = {dt: v for dt, v in parsed.items() if start_time <= dt < end_time}
 
+    sent_kWh = 0
     start_kWh = None
     end_kWh = None
     for dt, kWh in today_data.items():
@@ -881,48 +908,57 @@ def calc_export(now, start_time, end_time, data):
 
         end_kWh = kWh
 
-    sent_kWh = end_kWh - start_kWh
+    if start_kWh is not None and end_kWh is not None:
+        sent_kWh = end_kWh - start_kWh
 
-    if DEBUG >= 3:
-        print(f"start_kWh: {start_kWh:.1f}kWhrs")
-        print(f"end_kWh: {end_kWh:.1f}kWhrs")
-        print(f"sent_kWh: {sent_kWh:.1f}kWhrs")
+        if DEBUG >= 3:
+            print(f"start_kWh: {start_kWh:.1f}kWhrs")
+            print(f"end_kWh: {end_kWh:.1f}kWhrs")
+            print(f"sent_kWh: {sent_kWh:.1f}kWhrs")
 
     return sent_kWh
 
-def add_up(now, data):
+def add_up_earn(data):
 
-    be_export = calc_export(now, be_start, be_end, data)
-
-    after_limit_kWh = 0
-    if be_export > be_max_kWh:
-        after_limit_kWh = export1 - be_max_kW
-        be_export = be_max_kW
+    export1 = export2 = export3 = 0
 
     if nbe_start1 is not None and nbe_end1 is not None:
-        export1 = calc_export(now, nbe_start1, nbe_end1, data)
+        export1 = calc_export(nbe_start1, nbe_end1, data)
+
+    after_limit_kWh = 0
+    export2 = calc_export(be_start, be_end, data)
+    if export2 > be_max_kWh:
+
+        after_limit_kWh = export2 - be_max_kW
+        export2 = be_max_kW
 
     if nbe_start is not None and nbe_end is not None:
-        export2 = calc_export(now, nbe_start, nbe_end, data)
+        export3 = calc_export(nbe_start, nbe_end, data)
 
-    earn = be_export * be_fit + after_limit_kWh * be_remainder_fit + export1 * nbe_fit + export2 * nbe_fit
+    earn = export1 * nbe_fit + export2 * be_fit + after_limit_kWh * be_remainder_fit + export3 * nbe_fit
 
-    if DEBUG >= 1:
-         print(f"be_export: {be_export:.1f}kWh")
+    if DEBUG >= 3:
          print(f"be_fit: ${be_fit:.2f}")
-         print(f"after_limit_kWh: {after_limit_kWh:.1f}kWh")
          print(f"be_remainder_fit: ${be_remainder_fit:.2f}")
+         print(f"nbe_fit: ${nbe_fit:.2f}")
+
          print(f"export1: {export1:.1f}kWh")
          print(f"export2: {export2:.1f}kWh")
-         print(f"nbe_fit: ${nbe_fit:.2f}")
+         print(f"after_limit_kWh: {after_limit_kWh:.1f}kWh")
+         print(f"export3: {export3:.1f}kWh")
+
+    if DEBUG >= 1:
          print(f"earn: ${earn:.2f}")
+
          print()
 
     return earn
 
 def main():
 
-    global min_grid_export_kWhr
+    #pprint(openapi.get_logger())
+
+    #sys.exit()
 
     if DEBUG >= 1:
         print(f"Now: {now}")
@@ -937,15 +973,14 @@ def main():
             print("Failed to get data from Fox ESS API")
             sys.exit()
 
-        gen_kWhr = 0
+        earning = gen_kWhr = 0
         for row in history:
 
             if row["unit"] != "kWh":
                 continue
 
             if row["variable"] == "feedin":
-                earn = add_up(now, row["data"])
-                continue
+                earning = add_up_earn(row["data"])
 
             min = max = None
             for row2 in row["data"]:
@@ -1010,6 +1045,8 @@ def main():
 
         print(f"discharge_percent: {discharge_percent}%")
         print(f"discharge_kWhr: {discharge_kWhr:.2f}kWhrs")
+
+        print(f"earning: ${earning:.2f}")
 
         print()
 
@@ -1383,6 +1420,11 @@ def main():
     tom = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     before_midnight = tom - timedelta(microseconds=1)
 
+    if DEBUG >= 3:
+        print(f"now: {now}")
+        print(f"tom: {tom}")
+        print(f"before_midnight: {before_midnight}")
+
     if now <= before_midnight:
         if last_download["solcast1"]["url"] is not None and last_download["solcast1"]["url"].startswith("https://"):
             forecast1 = get_json("solcast1")
@@ -1475,7 +1517,7 @@ def main():
 
     charge_rate = int(charge_rate)
 
-    new_periods = generate_periods(now, charge_rate, excess_kWhrs * 1000, house_rate3 * 1000, house_rate4 * 1000)
+    new_periods = generate_periods(now, charge_rate, excess_kWhrs * 1000, house_rate3 * 1000, house_rate4 * 1000, earning)
 
     if not upload_schedule:
         print()
@@ -1543,9 +1585,9 @@ if __name__ == "__main__":
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
 
-    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85)
-    min_grid_percent = configParser.getfloat("Defaults", "min_grid_percent", fallback = 10)
-    discharge_percent = configParser.getfloat("Defaults", "discharge_percent", fallback = 40)
+    charge_percent = round(configParser.getfloat("Defaults", "charge_percent", fallback = 85))
+    min_grid_percent = round(configParser.getfloat("Defaults", "min_grid_percent", fallback = 10))
+    discharge_percent = round(configParser.getfloat("Defaults", "discharge_percent", fallback = 40))
 
     house_usage = configParser.getfloat("Defaults", "average_usage", fallback = 0.6)
 
@@ -1562,6 +1604,8 @@ if __name__ == "__main__":
     max_charge_rate = configParser.getfloat("Defaults", "max_charge_rate", fallback = 5)
     max_discharge_rate = configParser.getfloat("Defaults", "max_discharge_rate", fallback = 5)
     charge_rate_limit = configParser.getfloat("Defaults", "charge_rate", fallback = 10)
+
+    price_target = configParser.getfloat("Defaults", "price_target", fallback = 1.2)
 
     foxess_apikey = configParser.get("FoxESS", "apikey", fallback = None)
 

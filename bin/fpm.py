@@ -353,7 +353,7 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
 
     max_amount = int(max_rate * max_hours)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"max_hours: {max_hours}")
         print(f"max_rate: {max_rate}")
         print(f"max_amount: {max_amount}")
@@ -363,19 +363,19 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
 
     discharge_time_secs = int(math.ceil(discharge_amount / max_rate * 60) * 60)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"discharge_amount: {discharge_amount}")
         print(f"discharge_time_secs: {discharge_time_secs}")
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"end_time: {end_time}")
 
     if end_time > be_end:
         end_time = be_end
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"end_time: {end_time}")
 
     discharge_amount2 = 0
@@ -383,7 +383,7 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
         discharge_amount2 = discharge_amount - be_max_kWh * 1000
         discharge_amount = be_max_kWh * 1000
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"discharge_amount: {discharge_amount}")
         print(f"discharge_amount2: {discharge_amount2}")
 
@@ -391,20 +391,20 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
         discharge_amount2 += discharge_amount - max_amount
         discharge_amount = max_amount
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"discharge_amount: {discharge_amount}")
         print(f"discharge_amount2: {discharge_amount2}")
 
     earn1 = discharge_amount / 1000 * be_fit
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"price_target: {price_target}")
         print(f"earning: {earning}")
         print(f"earn1: {earn1}")
 
     earn2 = discharge_amount2 / 1000 * be_remainder_fit
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"earn2: {earn2}")
 
     if earning + earn1 >= price_target:
@@ -412,18 +412,18 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
     elif discharge_amount2 > 0:
         new_target = (price_target - earning - earn1) * 1000 / be_remainder_fit
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"new_target: {new_target}")
 
         if new_target > discharge_amount2:
             new_target = discharge_amount2
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"new_target: {new_target}")
 
         discharge_amount2 = new_target
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"discharge_amount2: {discharge_amount2}")
 
     if start_time == be_start and DEBUG >= 1:
@@ -1458,7 +1458,8 @@ def main():
 
     time_period_in_hours5 = (solar_start_next - start_time).total_seconds() / 3600
 
-    print(f"time_period_in_hours5: {time_period_in_hours5:.2f}")
+    if DEBUG >= 1:
+        print(f"time_period_in_hours5: {time_period_in_hours5:.2f}")
 
     house_usage_kWhrs5 = round(house_usage * time_period_in_hours5, 2)
 
@@ -1750,7 +1751,7 @@ if __name__ == "__main__":
     solar_start_next = solar_start + timedelta(days=1)
     solar_dropoff = get_elevation_time(observer, drop_off_angle, now.date(), SunDirection.SETTING)
 
-    if DEBUG >= 2:
+    if DEBUG >= 3:
         print(f"start_angle: {start_angle}")
         print(f"solar_start: {solar_start}")
         print(f"solar_start_next: {solar_start_next}")
@@ -1770,9 +1771,6 @@ if __name__ == "__main__":
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now_really.date(), time(12, 30, 30), tzinfo=LOCAL_TZ)])
     else:
         SOLCAST_SCHEDULED_TIMES.extend([datetime.combine(now_really.date(), time(18, 0, 30), tzinfo=LOCAL_TZ)])
-
-    if DEBUG >= 1:
-        print(f"solar_dropoff: {solar_dropoff}")
 
     SOLCAST_SCHEDULED_TIMES.sort()
 

@@ -127,7 +127,7 @@ def add_up_earn(yesterday, midnight, data):
 
     earn = be_export * be_fit + after_limit_kWh * be_remainder_fit + export1 * nbe_fit + export2 * nbe_fit
 
-    if DEBUG >= 3:
+    if DEBUG >= 2:
          print(f"be_export: {be_export:.1f}kWh")
          print(f"be_fit: ${be_fit:.2f}")
          print(f"after_limit_kWh: {after_limit_kWh:.1f}kWh")
@@ -217,7 +217,11 @@ def add_up_paid(yesterday, midnight, data):
 
 def get_yesterday_balance(now):
 
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if run_today:
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    else:
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
     midnight5 = midnight + timedelta(minutes=5)
     yesterday = midnight - timedelta(days=1)
 
@@ -225,7 +229,7 @@ def get_yesterday_balance(now):
         print(f"midnight: {midnight}")
         print(f"yesterday: {yesterday}")
 
-    if os.path.exists(yesterday_earn_filename):
+    if os.path.exists(yesterday_earn_filename) and not run_today:
 
         file_mtime = datetime.fromtimestamp(os.path.getmtime(yesterday_earn_filename), tz=LOCAL_TZ)
 
@@ -292,13 +296,20 @@ def get_yesterday_balance(now):
 
         total = conn_fee + yesterday_paid - yesterday_earn
 
-        if under_limit:
-            total -= discount
+        if not run_today or now >= be_end:
+            if under_limit:
+                total -= discount
 
-        if under_limit and DEBUG >= 1:
-            print(f"Under_limit discount: ${discount:.2f}")
-        elif DEBUG >= 1:
-            print(f"Under_limit discount: $0.00")
+            if under_limit and DEBUG >= 1:
+                print(f"under_limit discount: ${discount:.2f}")
+            elif DEBUG >= 1:
+                print(f"under_limit discount: $0.00")
+
+        if run_today and now < be_end and DEBUG >= 1:
+            print("It's too early to tell if the export limit will be met or not.")
+
+        if run_today:
+            return total
 
         try:
             with open(yesterday_earn_filename, "w") as f:
@@ -327,12 +338,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Python script to tweak Fox ESS battery settings")
     parser.add_argument("-c", "--config", type = str, default="/etc/fpm.conf",
                         help="Path to config file, /etc/fpm.conf is the default")
+    parser.add_argument("-t", "--today", action="store_true", help="Run for today without requiring a full day's worth of data")
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity level (use -v, -vv, -vvv etc)')
     args = parser.parse_args()
 
     DEBUG = 0
     if args.verbose is not None and args.verbose > 0:
         DEBUG = args.verbose
+
+    run_today = args.today
 
     if(not os.path.exists(args.config) or not os.path.isfile(args.config)):
         print(f"Config file {args.config} doesn't exist.")
@@ -356,6 +370,11 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
 
     now = datetime.now(LOCAL_TZ)
+    #now = datetime(2026, 3, 10, 19, 0, 0, tzinfo=LOCAL_TZ)
+
+    if now.hour == 0 and now.minute < 5:
+        print("To allow your data logger time to fully upload data, you need to run this script 5 minutes after midnight,")
+        sys.exit()
 
     output_time_format = "%-I:%M%p"
 
@@ -406,7 +425,14 @@ if __name__ == "__main__":
 
     print(f"The below total won't match Globird's because of rounding by Fox ESS")
 
-    if yesterday_balance >= 0:
-        print(f"yesterday_balance: ${yesterday_balance:.2f}")
+    if run_today:
+        if yesterday_balance >= 0:
+            print(f"today_balance: ${yesterday_balance:.2f}")
+        else:
+            print(f"today_balance: -${abs(yesterday_balance):.2f}")
+
     else:
-        print(f"yesterday_balance: -${abs(yesterday_balance):.2f}")
+        if yesterday_balance >= 0:
+            print(f"yesterday_balance: ${yesterday_balance:.2f}")
+        else:
+            print(f"yesterday_balance: -${abs(yesterday_balance):.2f}")

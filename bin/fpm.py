@@ -578,7 +578,7 @@ def generate_periods(now, charge_rate, discharge_amount, house_rate3, house_rate
 
     return periods
 
-def compare_period(old_period, new_period):
+def compare_period(period, old_period, new_period):
     """Compare Fox ESS configurations and report changes."""
     changes = []
 
@@ -605,6 +605,16 @@ def compare_period(old_period, new_period):
     new_extra = new_period.get("extraParam", {})
 
     for param in ["minSocOnGrid", "maxSoc", "fdSoc", "fdPwr", "exportLimit", "importLimit", "pvLimit", "reactivePower"]:
+
+        if period == 1:
+
+            new_val = new_extra.get("fdPwr")
+            old_val = old_extra.get("fdPwr")
+
+            if new_val is not None and old_val is not None:
+                if new_extra.get("fdPwr") * 0.9 <= old_extra.get("fdPwr") <= new_extra.get("fdPwr") * 1.1:
+                    continue
+
         if old_extra.get(param) != new_extra.get(param):
             changes.append(f"{param}: {old_extra.get(param)} → {new_extra.get(param)}")
 
@@ -627,7 +637,7 @@ def check_periods(old_periods, new_periods):
             all_changes[i] = [f"Old period missing: {new}"]
             continue
 
-        changes = compare_period(old, new)
+        changes = compare_period(i, old, new)
         if changes:
             all_changes[i] = changes
 
@@ -1518,7 +1528,7 @@ def main():
     if charge_rate > charge_rate_limit * 1000:
         charge_rate = charge_rate_limit * 1000
 
-    charge_rate = int(charge_rate)
+    charge_rate = int(charge_rate * 1.1)
 
     new_periods = generate_periods(now, charge_rate, excess_kWhrs * 1000, house_rate3 * 1000, house_rate4 * 1000, earning)
 

@@ -1147,6 +1147,19 @@ def main():
 
             print()
 
+        # Base estimate production on 90% since we can always export more
+        if rest_of_today_kWhr1 > 0:
+            rest_of_today_kWhr1 *= 0.9
+
+        if rest_of_today_kWhr1a > 0:
+            rest_of_today_kWhr1a *= 0.9
+
+        if rest_of_today_kWhr2 > 0:
+            rest_of_today_kWhr2 *= 0.9
+
+        if rest_of_today_kWhr2a > 0:
+            rest_of_today_kWhr2a *= 0.9
+
         time_period_in_hours1 = (be_start - now).total_seconds() / 3600
 
         if time_period_in_hours1 < 0:
@@ -1332,7 +1345,7 @@ def main():
                 else:
                     print(f"approx_aircon_usage3 until {be_end.strftime(output_time_format).lower()}: {approx_aircon_usage3:.2f}kWhrs")
 
-        max_kWhrs3 = approx_aircon_usage3 + house_usage_kWhrs3
+        max_kWhrs3 = (approx_aircon_usage3 + house_usage_kWhrs3) * 1.1
 
         house_rate3 = max_kWhrs3 / time_period_in_hours3
 
@@ -1528,7 +1541,7 @@ def main():
     if charge_rate > charge_rate_limit * 1000:
         charge_rate = charge_rate_limit * 1000
 
-    charge_rate = int(charge_rate * 1.1)
+    charge_rate = int(charge_rate)
 
     new_periods = generate_periods(now, charge_rate, excess_kWhrs * 1000, house_rate3 * 1000, house_rate4 * 1000, earning)
 

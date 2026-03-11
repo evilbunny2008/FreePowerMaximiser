@@ -251,8 +251,8 @@ def get_yesterday_balance(now):
                         ret = float(ret)
 
                         if DEBUG >= 3:
-                            if ret >= 0:
-                                print(f"ret: ${ret:.2f}")
+                            if round(ret, 2) > -0.01:
+                                print(f"ret: ${abs(ret):.2f}")
                             else:
                                 print(f"ret: -${abs(ret):.2f}")
 
@@ -281,7 +281,7 @@ def get_yesterday_balance(now):
 
         if row["variable"] == "feedin":
 
-            yesterday_earn = round(add_up_earn(yesterday, midnight, row["data"]), 2)
+            yesterday_earn = add_up_earn(yesterday, midnight, row["data"])
 
             if DEBUG >= 3:
                 print(f"yesterday_earn: ${yesterday_earn:.2f}")
@@ -312,11 +312,16 @@ def get_yesterday_balance(now):
             return total
 
         try:
+
+            out_total = round(total, 2)
+            if out_total > -0.01:
+                out_total = abs(out_total)
+
             with open(yesterday_earn_filename, "w") as f:
-                f.write(str(round(total, 2)))
+                f.write(str(out_total))
 
             if DEBUG >= 1:
-                print(f"Wrote '{round(total, 2)}' to '{yesterday_earn_filename}'")
+                print(f"Wrote '{out_total}' to '{yesterday_earn_filename}'")
 
             new_time = midnight5.timestamp()
 
@@ -426,13 +431,13 @@ if __name__ == "__main__":
     print(f"The below total won't match Globird's because of rounding by Fox ESS")
 
     if run_today:
-        if yesterday_balance >= 0:
-            print(f"today_balance: ${yesterday_balance:.2f}")
+        if yesterday_balance > -0.01:
+            print(f"today_balance: ${abs(yesterday_balance):.2f}")
         else:
             print(f"today_balance: -${abs(yesterday_balance):.2f}")
 
     else:
-        if yesterday_balance >= 0:
-            print(f"yesterday_balance: ${yesterday_balance:.2f}")
+        if yesterday_balance > -0.01:
+            print(f"yesterday_balance: ${abs(yesterday_balance):.2f}")
         else:
             print(f"yesterday_balance: -${abs(yesterday_balance):.2f}")

@@ -82,7 +82,7 @@ def perform_download(url, filename):
     """Perform the actual download."""
 
     if DEBUG >= 1:
-        print(f"Fetching fresh data for {url} and saving it to {filename}...")
+        print(f"Fetching fresh data for {redact_api_key(url)} and saving it to {filename}...")
 
     try:
         response = requests.get(url, timeout=30)
@@ -91,7 +91,7 @@ def perform_download(url, filename):
         if statcode != 200:
 
             if DEBUG >= 1:
-                print(f"Failed to download: {url}, status_code: {statcode}, reason: {response.reason}...")
+                print(f"Failed to download: {redact_api_key(response.url)}, status_code: {statcode}, reason: {response.reason}...")
 
             return {"success": False, "code": statcode, "error": response.reason, "result": None}
 
@@ -103,7 +103,7 @@ def perform_download(url, filename):
             return {"success": False, "code": -1, "error": "nothing returned", "result": None}
 
         if DEBUG >= 1:
-            print(f"Successfully downloaded from: {response.url}")
+            print(f"Successfully downloaded from: {redact_api_key(response.url)}")
 
         with open(filename, "w") as f:
             f.write(response.text)
@@ -768,7 +768,7 @@ def get_BOM_geohash(lat, lon):
     if statcode != 200:
 
         if DEBUG >= 3:
-            print(f"Failed to download: {url}, status_code: {statcode}, reason: {response.reason}...")
+            print(f"Failed to download: {redact_api_key(url)}, status_code: {statcode}, reason: {response.reason}...")
 
         return {"success": False, "code": statcode, "error": response.reason, "geohash": None}
 
@@ -892,6 +892,10 @@ def make_apicall(endpoint, api_arg1=None, api_arg2=None):
 
         return ret
 
+    except FoxESSAPIError as fe:
+        print(f"Error! While calling openapi.{fe.fn} the following error occured, code: {fe.error_code}, message: {fe.message}")
+        sys.exit()
+
     except Exception as e:
 
         raise e
@@ -967,19 +971,90 @@ def add_up_earn(data):
 
     return earn
 
+def redact_api_key(url):
+
+    # redact query string api_key parameter
+    url = re.sub(r'([?&])api_key=[^&]*', r'\1api_key=REDACTED', url)
+
+    # redact forecast.solar URL path apikey
+    url = re.sub(r'(forecast\.solar/)([^/]+)(/(estimate|history|clearsky|weather|chart|charts|info)/)', r'\1REDACTED\3', url)
+
+    return url
+
 def main():
-
-    #pprint(openapi.get_logger())
-
-    #sys.exit()
 
     if DEBUG >= 1:
         print(f"Now: {now}")
 
+    if output_schedule:
+
+        curr_periods = make_apicall("get_schedules")
+
+        if curr_periods is None:
+            print("Failed to get data from Fox ESS API")
+            sys.exit()
+
+        pprint(curr_periods)
+        sys.exit()
+
     if not SkipAPI:
 
-        #history = openapi.get_history("today", v=["PVEnergyTotal", "generation", "SoC"])
-        #history = openapi.get_history("today", v=["PVEnergyTotal", "generation"])
+        if do_battery:
+
+            real = openapi.get_real()
+
+            if real is None:
+                print("Failed to get data from Fox ESS API")
+                sys.exit()
+
+            pprint(real)
+            sys.exit()
+
+            batt = openapi.get_battery()
+            pprint(batt)
+            sys.exit()
+
+            history = openapi.get_history("today", v=["batCurrent"])
+            pprint(history)
+            sys.exit()
+
+        if do_history:
+
+            #history = openapi.get_history("today", v=["PVEnergyTotal", "generation", "SoC"])
+            #history = openapi.get_history("today", v=["PVEnergyTotal", "generation"])
+            history = openapi.get_history("today", v=["invTemperation", "batTemperature", "ambientTemperation"])
+            #pprint(history)
+            #sys.exit()
+
+            if history is None:
+                print("Failed to get data from Fox ESS API")
+                sys.exit()
+
+            for row in history:
+                min = max = None
+                for row2 in row["data"]:
+
+                    val = row2["value"];
+
+                    if min is None or val < min:
+                        min = val
+
+                    if max is None or val > max:
+                        max = val
+
+                if min is not None and max is not None:
+                    diff = max - min
+                else:
+                    diff = 0
+
+                if DEBUG >= 0:
+                    print(f"variable: {row['variable']}")
+                    print(f"min: {min}{row['unit']}")
+                    print(f"max: {max}{row['unit']}")
+                    print(f"diff: {diff}{row['unit']}")
+                    print()
+
+            sys.exit()
 
         history = make_apicall("history", "today")
         if history is None:
@@ -1266,7 +1341,7 @@ def main():
             if needed_kWhrs > 0 and less_hrs > 0:
 
                 if DEBUG >= 1:
-                    print(f"We need an additional {needed_kWhrs:.2f}kWhrs")
+                    print(f"You need an additional {needed_kWhrs:.2f}kWhrs")
 
                 charge_rate = round(needed_kWhrs * 1000 / less_hrs)
 
@@ -1278,14 +1353,14 @@ def main():
                 after_import = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
 
                 if DEBUG >= 1:
-                    print(f"We should import at {charge_rate} watts from the grid between {actual_fp_start.strftime(output_time_format).lower()} and {actual_fp_end.strftime(output_time_format).lower()} so that the " + \
+                    print(f"You should import at {charge_rate} watts from the grid between {actual_fp_start.strftime(output_time_format).lower()} and {actual_fp_end.strftime(output_time_format).lower()} so that the " + \
                           f"battery will be up to {left_in_battery_kWhrs:.2f}kWhrs/{after_import}% by {be_start.strftime(output_time_format).lower()}")
 
             if DEBUG >= 1:
                 if needed_kWhrs < 0:
-                    print(f"We will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
+                    print(f"You will have a surplus of {abs(needed_kWhrs):.2f}kWhrs today")
                 elif needed_kWhrs == 0:
-                    print(f"We will have neither a surplus nor deficit today")
+                    print(f"You will have neither a surplus nor deficit today")
 
         if DEBUG >= 1:
             print()
@@ -1504,9 +1579,9 @@ def main():
 
     if DEBUG >= 1:
         if now.date() == solar_start_next.date():
-            print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs}kWhrs/{after_import}%")
+            print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()} when solar should equal house load: {left_in_battery_kWhrs}kWhrs/{after_import}%")
         else:
-            print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWh/{after_import}%")
+            print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()} when solar should equal house load: {left_in_battery_kWhrs:.2f}kWh/{after_import}%")
 
     excess_kWhrs = left_in_battery_kWhrs - discharge_kWhr
 
@@ -1529,9 +1604,9 @@ def main():
             after_import = round(left_in_battery_kWhrs / max_batt_kWhr * 100)
 
             if now.date() == solar_start_next.date():
-                print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs/{after_import}%")
+                print(f"left_in_battery_kWhrs at {solar_start_next.strftime(output_time_format).lower()} when solar should equal house load: {left_in_battery_kWhrs:.2f}kWhrs/{after_import}%")
             else:
-                print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()}: {left_in_battery_kWhrs:.2f}kWhrs/{after_import}%")
+                print(f"left_in_battery_kWhrs tomorrow at {solar_start_next.strftime(output_time_format).lower()} when solar should equal house load: {left_in_battery_kWhrs:.2f}kWhrs/{after_import}%")
 
             print()
 
@@ -1578,20 +1653,23 @@ def main():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Python script to tweak Fox ESS battery settings")
+    parser.add_argument("-b", "--battery", action="store_true", help="Download historical battery data from the Fox ESS API")
     parser.add_argument("-c", "--config", type = str, default="/etc/fpm.conf",
                         help="Path to config file, /etc/fpm.conf is the default")
-    parser.add_argument("-s", "--skip-openapi", action="store_true", help="Disables access to the Fox ESS API, only useful for testing and debugging, enabling this option disables uploading as well.")
+    parser.add_argument("-d", "--do-history", action="store_true", help="Download historical data from the Fox ESS API")
+    parser.add_argument("-dv", "--dump-variables", action="store_true", help="Download and show the current schedule from the Fox ESS API")
     parser.add_argument("-n", "--no-upload", action="store_true", help="Don't uploading the new schedule to the Fox ESS API")
+    parser.add_argument("-o", "--output-schedule", action="store_true", help="Download and show the current schedule from the Fox ESS API")
+    parser.add_argument("-s", "--skip-openapi", action="store_true", help="Disables access to the Fox ESS API, only useful for testing and debugging, enabling this option disables uploading as well.")
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity level (use -v, -vv, -vvv etc)')
     args = parser.parse_args()
 
-    DEBUG = 0
-    if args.verbose is not None and args.verbose > 0:
-        DEBUG = args.verbose
-
-    upload_schedule = True
-    if args.no_upload:
-        upload_schedule = False
+    DEBUG = args.verbose
+    do_battery = args.battery
+    do_history = args.do_history or do_battery
+    dump_variables = args.dump_variables
+    output_schedule = args.output_schedule
+    upload_schedule = not args.no_upload
 
     SkipAPI = False
     if args.skip_openapi:
@@ -1622,8 +1700,18 @@ if __name__ == "__main__":
     tz = configParser.get("Defaults", "timezone", fallback = "UTC")
     lat = configParser.getfloat("Defaults", "lat", fallback = 0)
     lon = configParser.getfloat("Defaults", "lon", fallback = 0)
+    elevation = configParser.getfloat("Defaults", "elevation", fallback = 0)
+    elevation_unit = configParser.get("Defaults", "elevation_unit", fallback = "m").lower()
     start_angle = configParser.getfloat("Defaults", "start_angle", fallback = 22.5)
     drop_off_angle = configParser.getfloat("Defaults", "drop_off_angle", fallback = 22.5)
+
+    if elevation_unit not in ["m", "f"]:
+        print(f"The elevation_unit '{elevation_unit}' is invalid.")
+        sys.exit()
+
+    elevation_m = elevation
+    if elevation_unit == "f":
+        elevation_m *= 0.3048
 
     max_charge_rate = configParser.getfloat("Defaults", "max_charge_rate", fallback = 5)
     max_discharge_rate = configParser.getfloat("Defaults", "max_discharge_rate", fallback = 5)
@@ -1739,8 +1827,9 @@ if __name__ == "__main__":
         print("At this stage this program is specifically coded for use in Australia and utilises BoM.gov.au hourly forecasts to estimate air con usage.")
         sys.exit()
 
+    BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
+
     LOCAL_TZ = ZoneInfo(tz)
-    UTC_TZ = ZoneInfo("UTC")
 
     now = now_really = datetime.now(LOCAL_TZ)
     #now = datetime(2026, 3, 7, 8, 0, 0, tzinfo=LOCAL_TZ)
@@ -1768,7 +1857,7 @@ if __name__ == "__main__":
         nbe_start = datetime.combine(now.date(), time(nbe_start_hour), tzinfo=LOCAL_TZ)
         nbe_end = datetime.combine(now.date(), time(nbe_end_hour), tzinfo=LOCAL_TZ)
 
-    observer = Observer(latitude=lat, longitude=lon)
+    observer = Observer(latitude=lat, longitude=lon, elevation=elevation_m)
 
     solar_start = get_elevation_time(observer, start_angle, now.date(), SunDirection.RISING)
     solar_start_next = solar_start + timedelta(days=1)
@@ -1822,7 +1911,17 @@ if __name__ == "__main__":
             if new_time + timedelta(minutes=15) < solar_dropoff:
                 FSOLAR_SCHEDULED_TIMES.extend([new_time])
 
-    BOM_API = f"https://api.weather.bom.gov.au/v1/locations/{BOM_geohash}/forecasts/hourly"
+    if solcast_apikey is not None and solcast_apikey != "" and solcast_siteid1 is not None and solcast_siteid1 != "":
+        solcast_url1 = f"https://api.solcast.com.au/rooftop_sites/{solcast_siteid1}/forecasts?format=json&api_key={solcast_apikey}"
+        last_download["solcast1"]["url"] = solcast_url1
+    else:
+        last_download["solcast1"]["url"] = None
+
+    if solcast_apikey is not None and solcast_apikey != "" and solcast_siteid2 is not None and solcast_siteid2 != "":
+        solcast_url2 = f"https://api.solcast.com.au/rooftop_sites/{solcast_siteid2}/forecasts?format=json&api_key={solcast_apikey}"
+        last_download["solcast2"]["url"] = solcast_url2
+    else:
+        last_download["solcast2"]["url"] = None
 
     if fsolar_tilt1 != -1:
         fsolar_url1 = f"https://api.forecast.solar/estimate/watthours/{lat}/{lon}/{fsolar_tilt1}/{fsolar_az1}/{fsolar_size1}.json"
@@ -1842,17 +1941,105 @@ if __name__ == "__main__":
     else:
         last_download["fsolar2"]["url"] = None
 
-    if solcast_apikey is not None and solcast_apikey != "" and solcast_siteid1 is not None and solcast_siteid1 != "":
-        solcast_url1 = f"https://api.solcast.com.au/rooftop_sites/{solcast_siteid1}/forecasts?format=json&api_key={solcast_apikey}"
-        last_download["solcast1"]["url"] = solcast_url1
-    else:
-        last_download["solcast1"]["url"] = None
+    if args.dump_variables:
 
-    if solcast_apikey is not None and solcast_apikey != "" and solcast_siteid2 is not None and solcast_siteid2 != "":
-        solcast_url2 = f"https://api.solcast.com.au/rooftop_sites/{solcast_siteid2}/forecasts?format=json&api_key={solcast_apikey}"
-        last_download["solcast2"]["url"] = solcast_url2
-    else:
-        last_download["solcast2"]["url"] = None
+        redacted_last_download = last_download
+
+        if redacted_last_download["solcast1"]["url"] is not None:
+            redacted_last_download["solcast1"]["url"] = redact_api_key(redacted_last_download["solcast1"]["url"])
+
+        if redacted_last_download["solcast2"]["url"] is not None:
+            redacted_last_download["solcast2"]["url"] = redact_api_key(redacted_last_download["solcast2"]["url"])
+
+        if redacted_last_download["fsolar1"]["url"] is not None:
+            redacted_last_download["fsolar1"]["url"] = redact_api_key(redacted_last_download["fsolar1"]["url"])
+
+        if redacted_last_download["fsolar2"]["url"] is not None:
+            redacted_last_download["fsolar2"]["url"] = redact_api_key(redacted_last_download["fsolar2"]["url"])
+
+        print(f"DEBUG: {DEBUG}")
+        print(f"do_battery: {do_battery}")
+        print(f"do_history: {do_history}")
+        print(f"dump_variables: {dump_variables}")
+        print(f"output_schedule: {output_schedule}")
+        print(f"upload_schedule: {upload_schedule}")
+        print(f"SkipAPI: {SkipAPI}")
+        print(f"args.config: {args.config}")
+        print(f"charge_percent: {charge_percent}")
+        print(f"min_grid_percent: {min_grid_percent}")
+        print(f"discharge_percent: {discharge_percent}")
+        print(f"house_usage: {house_usage}")
+        print(f"aircon_usage: {aircon_usage}")
+        print(f"aircon_cool_temp: {aircon_cool_temp}")
+        print(f"aircon_heat_temp: {aircon_heat_temp}")
+        print(f"tz: {tz}")
+        print(f"lat: {lat}")
+        print(f"lon: {lon}")
+        print(f"elevation: {elevation}")
+        print(f"elevation_unit: {elevation_unit}")
+        print(f"start_angle: {start_angle}")
+        print(f"drop_off_angle: {drop_off_angle}")
+        print(f"max_charge_rate: {max_charge_rate}")
+        print(f"max_discharge_rate: {max_discharge_rate}")
+        print(f"charge_rate_limit: {charge_rate_limit}")
+        print(f"price_target: {price_target}")
+        print(f"foxess_apikey: REDACTED")
+        print(f"solcast_apikey: REDACTED")
+        print(f"solcast_siteid1: {solcast_siteid1}")
+        print(f"solcast_siteid2: {solcast_siteid2}")
+        print(f"fsolar_degredation1: {fsolar_degredation1}")
+        print(f"fsolar_degredation2: {fsolar_degredation2}")
+        print(f"fsolar_tilt1: {fsolar_tilt1}")
+        print(f"fsolar_tilt2: {fsolar_tilt2}")
+        print(f"fsolar_az1: {fsolar_az1}")
+        print(f"fsolar_az2: {fsolar_az2}")
+        print(f"fsolar_size1: {fsolar_size1}")
+        print(f"fsolar_size2: {fsolar_size2}")
+        print(f"fp_start_hour: {fp_start_hour}")
+        print(f"fp_end_hour: {fp_end_hour}")
+        print(f"be_start_hour: {be_start_hour}")
+        print(f"be_end_hour: {be_end_hour}")
+        print(f"be_max_rate_kW: {be_max_rate_kW}")
+        print(f"be_min_rate_kW: {be_min_rate_kW}")
+        print(f"be_max_kWh: {be_max_kWh}")
+        print(f"be_fit: {be_fit}")
+        print(f"be_remainder_fit: {be_remainder_fit}")
+        print(f"nbe_start_hour1: {nbe_start_hour1}")
+        print(f"nbe_end_hour1: {nbe_end_hour1}")
+        print(f"nbe_start_hour: {nbe_start_hour}")
+        print(f"nbe_end_hour: {nbe_end_hour}")
+        print(f"nbe_max_rate_kW: {nbe_max_rate_kW}")
+        print(f"nbe_min_rate_kW: {nbe_min_rate_kW}")
+        print(f"nbe_fit: {nbe_fit}")
+        print(f"BOM_geohash: {BOM_geohash}")
+        print(f"BOM_API: {BOM_API}")
+        print(f"LOCAL_TZ: {LOCAL_TZ}")
+        print(f"now: {now}")
+        print(f"output_time_format: {output_time_format}")
+        print(f"actual_fp_start: {actual_fp_start}")
+        print(f"actual_fp_end: {actual_fp_end}")
+        print(f"fp_start: {fp_start}")
+        print(f"fp_end: {fp_end}")
+        print(f"be_start: {be_start}")
+        print(f"be_end: {be_end}")
+        print(f"nbe_start1: {nbe_start1}")
+        print(f"nbe_end1: {nbe_end1}")
+        print(f"nbe_start: {nbe_start}")
+        print(f"observer: {observer}")
+        print(f"solar_start: {solar_start}")
+        print(f"solar_start_next: {solar_start_next}")
+        print(f"solar_dropoff: {solar_dropoff}")
+
+        print("SOLCAST_SCHEDULED_TIMES:")
+        pprint(SOLCAST_SCHEDULED_TIMES)
+
+        print("FSOLAR_SCHEDULED_TIMES:")
+        pprint(FSOLAR_SCHEDULED_TIMES)
+
+        print("redacted_last_download:")
+        pprint(redacted_last_download)
+
+        sys.exit()
 
     atexit.register(save_last_download)
 

@@ -154,11 +154,11 @@ def add_up_paid(yesterday, midnight, data):
     import1 = calc_export(yesterday, fp_start_new, data)
     if import1 > 0:
         paid1 = import1 * shoulder_rate
-        print(f"WARNING! We imported {import1}kWhrs between {yesterday.strftime(output_time_format).lower()} and {fp_start_new.strftime(output_time_format).lower()} at a cost of ${paid1:.2f}")
+        print(f"WARNING! We imported {import1:.1f}kWhrs between {yesterday.strftime(output_time_format).lower()} and {fp_start_new.strftime(output_time_format).lower()} at a cost of ${paid1:.2f}")
 
     import2 = calc_export(fp_start_new, fp_end_new, data)
     if import2 > 0 and DEBUG >= 1:
-        print(f"INFO! We imported {import2:.2f}kWhrs between {fp_start_new.strftime(output_time_format).lower()} and {fp_end_new.strftime(output_time_format).lower()}")
+        print(f"INFO! We imported {import2:.1f}kWhrs between {fp_start_new.strftime(output_time_format).lower()} and {fp_end_new.strftime(output_time_format).lower()}")
 
     nbe_start_new1 = nbe_start1.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
     nbe_end_new1 = nbe_end1.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
@@ -166,12 +166,12 @@ def add_up_paid(yesterday, midnight, data):
     import3 = calc_export(fp_end_new, nbe_start_new1, data)
     if import3 > 0:
         paid3 = import3 * shoulder_rate
-        print(f"WARNING! We imported {import3:.2f}kWhrs between {fp_end_new.strftime(output_time_format).lower()} and {nbe_start_new1.strftime(output_time_format).lower()} at a cost of ${paid3:.2f}")
+        print(f"WARNING! We imported {import3:.1f}kWhrs between {fp_end_new.strftime(output_time_format).lower()} and {nbe_start_new1.strftime(output_time_format).lower()} at a cost of ${paid3:.2f}")
 
     import4 = calc_export(nbe_start_new1, nbe_end_new1, data)
     if import4 > 0:
         paid4 = import4 * peak_rate
-        print(f"WARNING! We imported {import4:.2f}kWhrs between {nbe_start_new1.strftime(output_time_format).lower()} and {nbe_end_new1.strftime(output_time_format).lower()} at a cost of ${paid4:.2f}")
+        print(f"WARNING! We imported {import4:.1f}kWhrs between {nbe_start_new1.strftime(output_time_format).lower()} and {nbe_end_new1.strftime(output_time_format).lower()} at a cost of ${paid4:.2f}")
 
     be_start_new = be_start.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
     be_end_new = be_end.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
@@ -192,7 +192,7 @@ def add_up_paid(yesterday, midnight, data):
     import6 = calc_export(be_end_new, peak_end, data)
     if import6 > 0:
         paid6 = import6 * peak_rate
-        print(f"WARNING! We imported {import6:.2f}kWhrs between {be_end_new.strftime(output_time_format).lower()} and {peak_end.strftime(output_time_format).lower()} at a cost of ${paid6:.2f}")
+        print(f"WARNING! We imported {import6:.1f}kWhrs between {be_end_new.strftime(output_time_format).lower()} and {peak_end.strftime(output_time_format).lower()} at a cost of ${paid6:.2f}")
 
     nbe_start_new = nbe_start.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
     nbe_end_new = nbe_end.replace(year=yesterday.year, month=yesterday.month, day=yesterday.day)
@@ -200,12 +200,12 @@ def add_up_paid(yesterday, midnight, data):
     import7 = calc_export(nbe_start_new, nbe_end_new, data)
     if import7 > 0:
         paid7 = import7 * peak_rate
-        print(f"WARNING! We imported {import7:.2f}kWhrs between {nbe_start_new.strftime(output_time_format).lower()} and {nbe_end_new.strftime(output_time_format).lower()} at a cost of ${paid7:.2f}")
+        print(f"WARNING! We imported {import7:.1f}kWhrs between {nbe_start_new.strftime(output_time_format).lower()} and {nbe_end_new.strftime(output_time_format).lower()} at a cost of ${paid7:.2f}")
 
     import8 = calc_export(peak_end, midnight, data)
     if import8 > 0:
         paid8 = import8 * shoulder_rate
-        print(f"WARNING! We imported {import8:.2f}kWhrs between {peak_end.strftime(output_time_format).lower()} and {midnight.strftime(output_time_format).lower()} at a cost of ${paid8:.2f}")
+        print(f"WARNING! We imported {import8:.1f}kWhrs between {peak_end.strftime(output_time_format).lower()} and {midnight.strftime(output_time_format).lower()} at a cost of ${paid8:.2f}")
 
     paid = paid1 + paid2 + paid3 + paid4 + paid5 + paid6 + paid7 + paid8
 

@@ -261,12 +261,10 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
     return {"with": with_wh, "without": without_wh, "period": period_wh}
 
-def get_wh_total2(period, now, start_time, end_time, fsolar_data):
+def get_wh_total2(period, start_time, end_time, fsolar_data):
     """
     Get forecast solar in Wh for today, excluding current hour and earlier.
     """
-
-    #DEBUG = 3
 
     if not fsolar_data:
         return {"with": 0, "without": 0, "period": 0}
@@ -318,7 +316,7 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
                 print(f"dt: {dt}")
                 print(f"previous_start_wh: {previous_start_wh}")
 
-        if actual_fp_start + delta <= dt <= actual_fp_end + delta and previous_period_start_wh is None:
+        if actual_fp_start + delta <= dt and previous_period_start_wh is None:
             previous_period_start_wh = wh
 
             if DEBUG >= 3:
@@ -327,7 +325,7 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
                 print(f"dt: {dt}")
                 print(f"previous_period_start_wh: {previous_period_start_wh}")
 
-        if dt < new_start_time or dt > end_time:
+        if dt <= new_start_time or dt > end_time:
             if DEBUG >= 3:
                print(f"Skipping {dt}")
 
@@ -337,24 +335,24 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
             print(f"dt: {dt}")
             print(f"wh: {round(wh)}")
 
-        if actual_fp_start + delta <= dt <= actual_fp_end + delta:
-            if period_start_wh is not None:
-                period_wh = wh
+        if actual_fp_start + delta < dt <= actual_fp_end + delta:
+            period_wh = wh
 
-                if DEBUG >= 3:
-                    print(f"period_wh: {round(period_wh)}")
-            else:
+            if DEBUG >= 3:
+                print(f"period_wh: {round(period_wh)}")
+
+            if period_start_wh is None:
                 period_start_wh = wh
 
-            if DEBUG >= 3:
-                print(f"period_start_wh: {round(period_start_wh)}")
+                if DEBUG >= 3:
+                    print(f"period_start_wh: {round(period_start_wh)}")
 
-        if start_wh is not None:
-            with_wh = wh
+        with_wh = wh
 
-            if DEBUG >= 3:
-                print(f"with_wh: {round(with_wh)}")
-        else:
+        if DEBUG >= 3:
+            print(f"with_wh: {round(with_wh)}")
+
+        if start_wh is None:
             start_wh = wh
 
             if DEBUG >= 3:
@@ -364,13 +362,14 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
 
         if DEBUG >= 3:
             print(f"previous_start_wh: {round(previous_start_wh)}")
+            print(f"start_wh: {round(start_wh)}")
 
         diff = start_wh - previous_start_wh
 
         if DEBUG >= 3:
             print(f"diff: {round(diff)}")
 
-        time = (60 - now.minute) / 60
+        time = (60 - start_time.minute) / 60
 
         if DEBUG >= 3:
             print(f"time: {time:.2f}")
@@ -382,27 +381,29 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
 
             print(f"start_wh: {round(start_wh)}")
 
-        start_wh += diff_wh
+        start_wh -= diff_wh
 
         if DEBUG >= 3:
-            print(f"start_wh: {round(start_wh)}")
+            print(f"start_wh - diff_wh: {round(start_wh)}")
+            print(f"with_wh: {round(with_wh)}")
 
         with_wh -= start_wh
 
         if DEBUG >= 3:
-            print(f"with_wh: {round(with_wh)}")
+            print(f"with_wh - start_wh: {round(with_wh)}")
 
-    if previous_period_start_wh is not None and period_start_wh is not None and period_wh > 0:
+    if previous_period_start_wh is not None and period_start_wh is not None:
 
         if DEBUG >= 3:
             print(f"previous_period_start_wh: {round(previous_period_start_wh)}")
+            print(f"period_start_wh: {round(period_start_wh)}")
 
         diff = period_start_wh - previous_period_start_wh
 
         if DEBUG >= 3:
             print(f"diff: {round(diff)}")
 
-        time = (60 - now.minute) / 60
+        time = (60 - start_time.minute) / 60
 
         if DEBUG >= 3:
             print(f"time: {time:.2f}")
@@ -411,13 +412,13 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
 
         if DEBUG >= 3:
             print(f"diff_wh: {round(diff_wh)}")
-
             print(f"period_start_wh: {round(period_start_wh)}")
 
-        period_start_wh += diff_wh
+        period_start_wh -= diff_wh
 
         if DEBUG >= 3:
-            print(f"period_start_wh + diff_wh: {round(period_start_wh)}")
+            print(f"period_start_wh - diff_wh: {round(period_start_wh)}")
+            print(f"period_wh: {round(period_wh)}")
 
         period_wh -= period_start_wh
 
@@ -1138,10 +1139,10 @@ def get_BOM_hourly(now, start_time, end_time):
         if fl_temp < aircon_cool_temp:
             continue
 
-        if not (start_time <= fc_period <= end_time):
+        if not (start_time <= fc_period < end_time):
             continue
 
-        if fp_start.hour <= fc_period.hour < fp_end.hour:
+        if actual_fp_start <= fc_period < actual_fp_end:
             fp_period += 1
             continue
 
@@ -1151,7 +1152,12 @@ def get_BOM_hourly(now, start_time, end_time):
         print(f"fp_period: {fp_period}")
         print(f"hours_without: {hours_without}")
 
-    return {"with": (fp_period + hours_without), "without": hours_without, "period": fp_period}
+    hours_with = hours_without + fp_period
+
+    if DEBUG >= 3:
+        print(f"hours_with: {hours_with}")
+
+    return {"with": hours_with, "without": hours_without, "period": fp_period}
 
 def get_elevation_time(observer, angle, target_date, direction):
 
@@ -1321,8 +1327,18 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
 
         house_usage_kWhr[period] = baseload * time_period_in_hours[period]
 
-        if start_times[period].hour >= 16 and end_times[period].hour < 23:
-            house_usage_kWhr[period] += peakload * time_period_in_hours[period]
+        if 16 <= start_time.hour < 23:
+
+            end_peak_time = now.replace(hour=23, minute=0, second=0, microsecond=0) - timedelta(microseconds=1)
+
+            new_end_time = period_end_time
+
+            if new_end_time > end_peak_time:
+                new_end_time = end_peak_time
+
+            peakloadtime = (new_end_time - start_time).total_seconds() / 3600
+
+            house_usage_kWhr[period] += peakload * peakloadtime
 
         if DEBUG >= 3:
             if now < period_start_time:
@@ -1380,28 +1396,9 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
 
             if period != 8:
                 solar_rate[period] = solar_production1[period] / time_period_in_hours[period] * solcast_under_estimate
-
-                if period == 1 and DEBUG >= 3:
-                    print(f"forecast1_dict['period']: {round(forecast1_dict['period'])}Wh")
-                    print(f"hrs: {hrs:.2f}hrs")
-
-                    print(f"solar_rate[{period}]: {round(solar_rate[period])}W")
-
-                    print()
-                    print()
-
             else:
-                hrs = (fp_end - fp_start).total_seconds() / 3600
-                solar_rate[period] = forecast1_dict["period"] / hrs * solcast_under_estimate
-
-                if DEBUG >= 3:
-                    print(f"forecast1_dict['period']: {round(forecast1_dict['period'])}Wh")
-                    print(f"hrs: {hrs:.2f}hrs")
-
-                    print(f"solar_rate[{period}]: {round(solar_rate[period])}W")
-
-                    print()
-                    print()
+                 hrs = (fp_end - fp_start).total_seconds() / 3600
+                 solar_rate[period] = forecast1_dict["period"] / hrs * solcast_under_estimate
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(period, start_time, period_end_time, forecast2)
@@ -1429,7 +1426,6 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
 
 def main():
 
-    global approx_aircon_usage, end_times, house_usage_kWhr, max_kWhr, solar_production1, solar_production2, solar_rate, start_times, time_period_in_hours
     global forecast1, forecast2
 
     earning = gen_kWhr = 0
@@ -1629,14 +1625,14 @@ def main():
         rest_of_today_kWhr2a = forecast2_dict["period"] / 1000
 
     if forecast3 is not None:
-        forecast3_dict = get_wh_total2(0, now, now, be_start, forecast3)
-        rest_of_today_kWhr3 = forecast3_dict["without"] * fsolar_degredation2 / 1000
-        rest_of_today_kWhr3a = forecast3_dict["period"] * fsolar_degredation2 / 1000
+        forecast3_dict = get_wh_total2(0, now, be_start, forecast3)
+        rest_of_today_kWhr3 = forecast3_dict["without"] / 1000
+        rest_of_today_kWhr3a = forecast3_dict["period"] / 1000
 
     if forecast4 is not None:
-        forecast4_dict = get_wh_total2(0, now, now, be_start, forecast4)
-        rest_of_today_kWhr4 = forecast4_dict["without"] * fsolar_degredation2 / 1000
-        rest_of_today_kWhr4a = forecast4_dict["period"] * fsolar_degredation2 / 1000
+        forecast4_dict = get_wh_total2(0, now, be_start, forecast4)
+        rest_of_today_kWhr4 = forecast4_dict["without"] / 1000
+        rest_of_today_kWhr4a = forecast4_dict["period"] / 1000
 
     if now < solar_dropoff:
 
@@ -1696,6 +1692,23 @@ def main():
     until_time = nbe_start1 + timedelta(days=1)
     calc_usage_and_production(now, period, solar_start_next, until_time)
 
+    if DEBUG >= 3:
+
+        print()
+        print("house_usage_kWhr:")
+        pprint(house_usage_kWhr)
+        print()
+
+        print()
+        print("solar_production1:")
+        pprint(solar_production1)
+        print()
+
+        print()
+        print("solar_production2:")
+        pprint(solar_production2)
+        print()
+
     charge_rate = deficit = 0
 
     if DEBUG >= 3:
@@ -1708,17 +1721,16 @@ def main():
         print()
         print()
 
-    end_time = end_times[1] + timedelta(microseconds=1)
-    if now < end_time:
+    if now < fp_end:
 
-        start_time = start_times[1]
+        start_time = fp_start
 
         if start_time < now:
             start_time = now
 
         if DEBUG >= 3:
             print(f"start_time: {start_time}")
-            print(f"end_time: {end_time}")
+            print(f"fp_end: {fp_end}")
             print()
             print()
 
@@ -1742,31 +1754,17 @@ def main():
 
         if balance_by_4pm < charge_kWhr:
 
-            if DEBUG >= 3:
-                print(f"start_time: {start_time}")
-                print(f"end_time: {end_time}")
-
             deficit = charge_kWhr - balance_by_4pm
 
             print(f"There may be a deficit of {deficit:.2f}kWhrs by {start_times[4].strftime(output_time_format).lower()}")
 
-            print(f"(end_time - start_time).total_seconds(): {round((end_time - start_time).total_seconds())}")
-
-            print(f"(end_time - start_time).total_seconds() / 3600: {((end_time - start_time).total_seconds() / 3600):.2f}")
-
-            charge_hrs = (end_time - start_time).total_seconds() / 3600
+            charge_hrs = (fp_end - start_time).total_seconds() / 3600
 
             print(f"charge_hrs: {charge_hrs:.2f}")
 
-            #print(f"solar_production1[1]: {solar_production1[1]:.2f}kWhrs")
-
             charge_rate = round(deficit * 1000 / charge_hrs)
 
-            print(f"The battery requires charging from the grid at {round(charge_rate)}W")
-
-            #charge_rate -= solar_rate[period]
-
-            #print(f"Setting import to {round(charge_rate)}W as the solar system is predicted to generate {round(solar_rate[period])}W")
+            print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period])}W from solar")
 
             print()
             print()
@@ -1779,7 +1777,9 @@ def main():
         solar_production2_kWhr = sum(v for k, v in solar_production2.items() if k < period and k != 1)
         balance = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr + deficit
 
-        if DEBUG >= 3:
+        if DEBUG >= 1:
+            print()
+            print(f"period: {period}")
             print(f"curr_kWhr: {curr_kWhr}")
             print(f"house_usage_kWhr: {house_usage_kWhr}")
             print(f"solar_production1_kWhr: {solar_production1_kWhr}")
@@ -1835,10 +1835,10 @@ def main():
 
         period = 8
 
-        house_usage_kWhr = max_kWhr[period]
+        house_usage_kWhr = sum(v for k, v in max_kWhr.items() if 6 <= k <= period)
         solar_production1_kWhr = solar_production1[period]
         solar_production2_kWhr = solar_production2[period]
-        balance_by_4pm = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr
+        balance_by_4pm = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr - surplus
 
         print(f"Solcast forecast for tomorrow until {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}: {(solar_production1_kWhr + solar_production2_kWhr):.2f}kWhrs")
 
@@ -1850,27 +1850,31 @@ def main():
 
         if balance_by_4pm < charge_kWhr:
 
+            if DEBUG >= 3:
+                print(f"house_usage_kWhr: {house_usage_kWhr:.2f}kWhrs")
+                print(f"solar_production1_kWhr: {solar_production1_kWhr:.2f}kWhrs")
+                print(f"solar_production2_kWhr: {solar_production2_kWhr}")
+                print(f"balance_by_4pm: {balance_by_4pm:.2f}kWhrs")
+
             deficit = charge_kWhr - balance_by_4pm
 
             print(f"There may be a deficit of {deficit:.2f}kWhrs by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}")
 
-            print(f"(fp_end - fp_start).total_seconds(): {round((fp_end - fp_start).total_seconds())}")
+            if DEBUG >= 3:
 
-            print(f"(fp_end - fp_start).total_seconds() / 3600: {((fp_end - fp_start).total_seconds() / 3600):.2f}")
+                print(f"(fp_end - fp_start).total_seconds(): {round((fp_end - fp_start).total_seconds())}")
+
+                print(f"(fp_end - fp_start).total_seconds() / 3600: {((fp_end - fp_start).total_seconds() / 3600):.2f}")
 
             charge_hrs = (fp_end - fp_start).total_seconds() / 3600
 
-            print(f"charge_hrs: {charge_hrs:.2f}")
+            if DEBUG >= 3:
 
-            print(f"solar_production1[{period}]: {solar_production1[period]:.2f}kWhrs")
+                print(f"charge_hrs: {charge_hrs:.2f}")
 
             charge_rate = round(deficit * 1000 / charge_hrs)
 
-            print(f"The battery requires charging at {round(charge_rate)}W")
-
-            charge_rate -= solar_rate[period]
-
-            print(f"Setting import to {round(charge_rate)}W as the solar system is predicted to generate {round(solar_rate[period])}W")
+            print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period])}W from solar")
 
         print()
         print()
@@ -2030,8 +2034,6 @@ if __name__ == "__main__":
 
     solcast_under_estimate = (100 - solcast_under_estimate) / 100
 
-    fsolar_degredation1 = (100 - configParser.getfloat("Forecast.Solar", "degredation1", fallback = 20)) / 100
-    fsolar_degredation2 = (100 - configParser.getfloat("Forecast.Solar", "degredation2", fallback = 20)) / 100
     fsolar_tilt1 = configParser.getfloat("Forecast.Solar", "tilt1", fallback = None)
     fsolar_tilt2 = configParser.getfloat("Forecast.Solar", "tilt2", fallback = None)
     fsolar_az1 = configParser.getfloat("Forecast.Solar", "az1", fallback = None)
@@ -2133,7 +2135,7 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
 
     now = now_really = datetime.now(LOCAL_TZ)
-    #now = datetime(2026, 3, 19, 22, 45, tzinfo=LOCAL_TZ)
+    #now = datetime(2026, 3, 21, 13, 45, tzinfo=LOCAL_TZ)
 
     output_time_format = "%-I:%M%p"
 
@@ -2289,8 +2291,6 @@ if __name__ == "__main__":
         print(f"solcast_apikey: REDACTED")
         print(f"solcast_siteid1: {solcast_siteid1}")
         print(f"solcast_siteid2: {solcast_siteid2}")
-        print(f"fsolar_degredation1: {fsolar_degredation1}")
-        print(f"fsolar_degredation2: {fsolar_degredation2}")
         print(f"fsolar_tilt1: {fsolar_tilt1}")
         print(f"fsolar_tilt2: {fsolar_tilt2}")
         print(f"fsolar_az1: {fsolar_az1}")

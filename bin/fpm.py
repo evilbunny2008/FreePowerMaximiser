@@ -266,6 +266,8 @@ def get_wh_total2(period, now, start_time, end_time, fsolar_data):
     Get forecast solar in Wh for today, excluding current hour and earlier.
     """
 
+    #DEBUG = 3
+
     if not fsolar_data:
         return {"with": 0, "without": 0, "period": 0}
 

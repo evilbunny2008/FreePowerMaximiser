@@ -437,7 +437,7 @@ def day_name(days_ahead):
     target = datetime.now(LOCAL_TZ) + timedelta(days=days_ahead)
     return target.strftime("%A")  # e.g. "Monday"
 
-def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, house_rate5, earning, nbe_discharge1):
+def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5, earning):
 
     if DEBUG >= 3:
         print(f"period: {period}")
@@ -447,7 +447,6 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
         print(f"house_rate4: {house_rate4}")
         print(f"house_rate5: {house_rate5}")
         print(f"earning: {earning}")
-        print(f"nbe_discharge1: {nbe_discharge1}")
 
     periods = []
 
@@ -457,18 +456,11 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
     if charge_rate > charge_rate_limit * 1000:
         charge_rate = charge_rate_limit * 1000
 
-    if discharge_amount < 0:
-        discharge_amount = 0
+    if surplus < 0:
+        surplus = 0
 
     import_fdPwr = int(charge_rate_limit * 1000)
     export_fdPwr = int(be_max_rate_kW * 1000)
-
-    charge_rate = int(charge_rate)
-    discharge_amount = int(discharge_amount)
-
-    nbe_discharge1 = int(nbe_discharge1)
-    if nbe_discharge1 < 0:
-        nbe_discharge1 = 0
 
     if nbe_max_rate_kW is not None:
         export_fdPwr2 = int(nbe_max_rate_kW * 1000)
@@ -503,7 +495,7 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
                                     "reactivePower": 0},
                      "workMode": "ForceCharge"}])
 
-    if discharge_amount <= 0 or be_start is None or be_end is None:
+    if surplus == 0 or be_start is None or be_end is None:
 
         periods.extend([{"enable": 1,
                          "startHour": fp_end.hour,
@@ -522,7 +514,8 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
 
         return periods
 
-    if nbe_discharge1 == 0:
+    surplus1 = 0
+    if surplus1 == 0:
 
         periods.extend([{"enable": 1,
                          "startHour": fp_end.hour,
@@ -575,7 +568,7 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
             print(f"max_amount: {round(max_amount)}")
             print(f"max_hours: {max_hours:.2f}")
             print(f"max_rate: {round(max_rate)}")
-            print(f"nbe_discharge1: {nbe_discharge1}")
+            print(f"surplus1: {surplus1}")
             print(f"discharge_time_secs: {discharge_time_secs}s")
 
         end_time = start_time + timedelta(minutes=30)
@@ -590,7 +583,7 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
         if DEBUG >= 3:
             print(f"solar1: {(solar1 / 1000):.2f}kWhrs")
 
-        discharge_time_secs = int(math.floor(nbe_discharge1 / max_rate * 30) * 60)
+        discharge_time_secs = int(math.floor(surplus1 / max_rate * 30) * 60)
 
         if DEBUG >= 3:
             print(f"discharge_time_secs: {round(discharge_time_secs)}s")
@@ -661,10 +654,10 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
         print(f"max_amount: {max_amount}")
         print(f"house_rate4: {house_rate4}")
 
-    discharge_time_secs = int(math.ceil(discharge_amount / max_rate * 60) * 60)
+    discharge_time_secs = int(math.ceil(surplus / max_rate * 60) * 60)
 
     if DEBUG >= 3:
-        print(f"discharge_amount: {discharge_amount}")
+        print(f"surplus: {surplus}")
         print(f"discharge_time_secs: {discharge_time_secs}")
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
@@ -679,23 +672,23 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
         print(f"end_time: {end_time}")
 
     discharge_amount2 = 0
-    if discharge_amount > be_max_kWh * 1000:
-        discharge_amount2 = discharge_amount - be_max_kWh * 1000
+    if surplus > be_max_kWh * 1000:
+        discharge_amount2 = surplus - be_max_kWh * 1000
         discharge_amount = be_max_kWh * 1000
 
     if DEBUG >= 3:
         print(f"discharge_amount: {discharge_amount}")
         print(f"discharge_amount2: {discharge_amount2}")
 
-    if discharge_amount > max_amount:
-        discharge_amount2 += discharge_amount - max_amount
-        discharge_amount = max_amount
+    if surplus > max_amount:
+        discharge_amount2 += surplus - max_amount
+        surplus = max_amount
 
     if DEBUG >= 3:
         print(f"discharge_amount: {discharge_amount}")
         print(f"discharge_amount2: {discharge_amount2}")
 
-    earn1 = discharge_amount / 1000 * be_fit
+    earn1 = surplus / 1000 * be_fit
 
     if DEBUG >= 3:
         print(f"price_target: {price_target}")
@@ -707,32 +700,30 @@ def generate_periods(period, now, charge_rate, discharge_amount, house_rate4, ho
     if DEBUG >= 3:
         print(f"earn2: {earn2}")
 
-    if earning + earn1 >= price_target:
-        discharge_amount2 = 0
-    elif discharge_amount2 > 0:
-        new_target = (price_target - earning - earn1) * 1000 / be_remainder_fit
+    new_target = (price_target - earning - earn1) * 1000 / be_remainder_fit
 
-        if DEBUG >= 3:
-            print(f"new_target: {new_target}")
+    if DEBUG >= 3:
+        print(f"new_target: {new_target}")
 
-        if new_target > discharge_amount2:
-            new_target = discharge_amount2
+    if new_target > discharge_amount2:
+        new_target = discharge_amount2
 
-        if DEBUG >= 3:
-            print(f"new_target: {new_target}")
+    if DEBUG >= 3:
+        print(f"new_target: {new_target}")
 
-        discharge_amount2 = new_target
+    discharge_amount2 = new_target
 
-        if DEBUG >= 3:
-            print(f"discharge_amount2: {discharge_amount2}")
+    if DEBUG >= 3:
+        print(f"discharge_amount2: {discharge_amount2}")
 
-    if discharge_amount2 < 1500:
+    discharge_amount2 = 0
+    if discharge_amount2 < 0:
         discharge_amount2 = 0
 
     if start_time == be_start and DEBUG >= 1:
-        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
+        print(f"You may earn up to ${earn1:.2f} exporting {(surplus / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
     elif DEBUG >= 1:
-        print(f"You may earn up to ${earn1:.2f} exporting {(discharge_amount / 1000):.2f}kWh between now and {be_end.strftime(output_time_format).lower()}")
+        print(f"You may earn up to ${earn1:.2f} exporting {(surplus / 1000):.2f}kWh between now and {be_end.strftime(output_time_format).lower()}")
 
     periods.extend([{"enable": 1,
                      "startHour": be_start.hour,
@@ -1195,6 +1186,12 @@ def make_apicall(endpoint, api_arg1=None, api_arg2=None):
         if endpoint == "battery":
             ret = openapi.get_battery()
 
+        if endpoint == "real":
+            if api_arg1 is not None:
+                ret = openapi.get_real(api_arg1)
+            else:
+                ret = openapi.get_real()
+
         if endpoint == "get_schedules":
             ret = openapi.get_schedule()["periods"]
 
@@ -1503,6 +1500,7 @@ def main():
 
             sys.exit()
 
+
         history = make_apicall("history", "today")
         if history is None:
             print("Failed to get data from Fox ESS API")
@@ -1552,7 +1550,8 @@ def main():
 
     else:
         max_batt_kWhr = 41.94
-        curr_kWhr = 21
+        curr_percent = 75
+        curr_kWhr = max_batt_kWhr * curr_percent / 100
         gen_kWhr = 0
 
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -1780,12 +1779,12 @@ def main():
         if DEBUG >= 1:
             print()
             print(f"period: {period}")
-            print(f"curr_kWhr: {curr_kWhr}")
-            print(f"house_usage_kWhr: {house_usage_kWhr}")
-            print(f"solar_production1_kWhr: {solar_production1_kWhr}")
-            print(f"solar_production2_kWhr: {solar_production2_kWhr}")
-            print(f"balance: {balance}")
-            print(f"deficit: {deficit}")
+            print(f"curr_kWhr: {curr_kWhr:.1f}kWhrs")
+            print(f"house_usage_kWhr: {house_usage_kWhr:.1f}kWhrs")
+            print(f"solar_production1_kWhr: {solar_production1_kWhr:.1f}kWhrs")
+            print(f"solar_production2_kWhr: {solar_production2_kWhr:.1f}kWhrs")
+            print(f"balance: {balance:.1f}kWhrs")
+            print(f"deficit: {deficit:.1f}kWhrs")
 
             print()
             print()
@@ -1822,7 +1821,7 @@ def main():
             print()
 
     surplus = 0
-    if balance > discharge_kWhr:
+    if balance > discharge_kWhr and not winter:
 
         surplus = balance - discharge_kWhr
 
@@ -1887,14 +1886,12 @@ def main():
 
     charge_rate = int(charge_rate)
 
-    nbe_discharge1 = 0
-
     rate4 = rate5 = 0
     if period != 8:
         rate4 = max_kWhr[4] * 1000 / time_period_in_hours[4]
         rate5 = max_kWhr[5] * 1000 / time_period_in_hours[5]
 
-    new_periods = generate_periods(period, now, charge_rate, surplus * 1000, rate4, rate5, earning, nbe_discharge1 * 1000)
+    new_periods = generate_periods(period, now, charge_rate, surplus * 1000, rate4, rate5, earning)
 
     if not upload_schedule:
         if DEBUG >= 1:
@@ -1960,6 +1957,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output-schedule", action="store_true", help="Download and show the current schedule from the Fox ESS API")
     parser.add_argument("-s", "--skip-openapi", action="store_true", help="Disables access to the Fox ESS API, only useful for testing and debugging, enabling this option disables uploading as well.")
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity level (use -v, -vv, -vvv etc)')
+    parser.add_argument('-w', '--winter', action='store_true', default=0, help='Switches from summer usage patterns to winter patterns')
     args = parser.parse_args()
 
     DEBUG = args.verbose
@@ -1968,6 +1966,7 @@ if __name__ == "__main__":
     dump_variables = args.dump_variables
     output_schedule = args.output_schedule
     upload_schedule = not args.no_upload
+    winter = args.winter
 
     SkipAPI = False
     if args.skip_openapi:
@@ -2176,7 +2175,7 @@ if __name__ == "__main__":
 
     # Scheduled download times
     SOLCAST_SCHEDULED_TIMES = [
-        datetime.combine(now.date(), time(11, 0, 30), tzinfo=LOCAL_TZ),
+        datetime.combine(now.date(), time(9, 0, 30), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(12, 0, 30), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(13, 0, 30), tzinfo=LOCAL_TZ),
         datetime.combine(now.date(), time(13, 30, 30), tzinfo=LOCAL_TZ),

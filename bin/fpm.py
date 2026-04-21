@@ -1670,10 +1670,10 @@ def main():
     calc_usage_and_production(now, period, actual_fp_start, actual_fp_end)
 
     period += 1
-    calc_usage_and_production(now, period, actual_fp_end, nbe_start1)
+    calc_usage_and_production(now, period, actual_fp_end, solar_dropoff)
 
     period += 1
-    calc_usage_and_production(now, period, nbe_start1, nbe_end1)
+    calc_usage_and_production(now, period, solar_dropoff, be_start)
 
     period += 1
     calc_usage_and_production(now, period, be_start, be_end)
@@ -1736,7 +1736,7 @@ def main():
         house_usage_kWhr = sum(v for k, v in max_kWhr.items() if k < 3 and k != 1)
         solar_production1_kWhr = sum(v for k, v in solar_production1.items() if k < 3)
         solar_production2_kWhr = sum(v for k, v in solar_production2.items() if k < 3 and k != 1)
-        balance_by_4pm = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr
+        balance_by_sd = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr
 
         if DEBUG >= 3:
             print(f"solar_production1_kWhr: {solar_production1_kWhr}")
@@ -1745,17 +1745,17 @@ def main():
             print()
             print()
 
-            print(f"balance_by_4pm: {balance_by_4pm}")
+            print(f"balance_by_sd: {balance_by_sd}")
             print(f"charge_kWhr: {charge_kWhr}")
 
             print()
             print()
 
-        if balance_by_4pm < charge_kWhr:
+        if balance_by_sd < charge_kWhr:
 
-            deficit = charge_kWhr - balance_by_4pm
+            deficit = charge_kWhr - balance_by_sd
 
-            print(f"There may be a deficit of {deficit:.2f}kWhrs by {start_times[4].strftime(output_time_format).lower()}")
+            print(f"There may be a deficit of {deficit:.2f}kWhrs by {start_times[3].strftime(output_time_format).lower()}")
 
             charge_hrs = (fp_end - start_time).total_seconds() / 3600
 
@@ -1837,25 +1837,25 @@ def main():
         house_usage_kWhr = sum(v for k, v in max_kWhr.items() if 6 <= k <= period)
         solar_production1_kWhr = solar_production1[period]
         solar_production2_kWhr = solar_production2[period]
-        balance_by_4pm = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr - surplus
+        balance_by_sd = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr - surplus
 
         print(f"Solcast forecast for tomorrow until {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}: {(solar_production1_kWhr + solar_production2_kWhr):.2f}kWhrs")
 
         print()
 
-        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance_by_4pm:.2f}kWhrs/{(balance_by_4pm / max_batt_kWhr * 100):.1f}%")
+        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance_by_sd:.2f}kWhrs/{(balance_by_sd / max_batt_kWhr * 100):.1f}%")
 
         print()
 
-        if balance_by_4pm < charge_kWhr:
+        if balance_by_sd < charge_kWhr:
 
             if DEBUG >= 3:
                 print(f"house_usage_kWhr: {house_usage_kWhr:.2f}kWhrs")
                 print(f"solar_production1_kWhr: {solar_production1_kWhr:.2f}kWhrs")
                 print(f"solar_production2_kWhr: {solar_production2_kWhr}")
-                print(f"balance_by_4pm: {balance_by_4pm:.2f}kWhrs")
+                print(f"balance_by_sd: {balance_by_sd:.2f}kWhrs")
 
-            deficit = charge_kWhr - balance_by_4pm
+            deficit = charge_kWhr - balance_by_sd
 
             print(f"There may be a deficit of {deficit:.2f}kWhrs by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}")
 

@@ -1830,6 +1830,15 @@ def main():
         print()
         print()
 
+    if balance > discharge_kWhr and winter:
+
+        surplus = 4.5
+
+        print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
+
+        print()
+        print()
+
     if now > be_end:
 
         period = 8
@@ -2147,7 +2156,7 @@ if __name__ == "__main__":
     be_start = be_end = None
     if be_start_hour is not None and be_end_hour is not None:
         be_start = datetime.combine(now.date(), time(be_start_hour), tzinfo=LOCAL_TZ)
-        be_end = datetime.combine(now.date(), time(be_end_hour), tzinfo=LOCAL_TZ)
+        be_end = datetime.combine(now.date(), time(be_end_hour), tzinfo=LOCAL_TZ) - timedelta(microseconds=1)
 
     nbe_start1 = nbe_end1 = None
     if nbe_start_hour1 is not None and nbe_end_hour1 is not None:

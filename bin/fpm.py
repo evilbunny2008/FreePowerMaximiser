@@ -1614,22 +1614,22 @@ def main():
         forecast2 = get_json(now, "solcast2")
 
     if forecast1 is not None:
-        forecast1_dict = get_wh_total(0, now, be_start, forecast1)
+        forecast1_dict = get_wh_total(0, now, solar_dropoff, forecast1)
         rest_of_today_kWhr1 = forecast1_dict["without"] / 1000
         rest_of_today_kWhr1a = forecast1_dict["period"] / 1000
 
     if forecast2 is not None:
-        forecast2_dict = get_wh_total(0, now, be_start, forecast2)
+        forecast2_dict = get_wh_total(0, now, solar_dropoff, forecast2)
         rest_of_today_kWhr2 = forecast2_dict["without"] / 1000
         rest_of_today_kWhr2a = forecast2_dict["period"] / 1000
 
     if forecast3 is not None:
-        forecast3_dict = get_wh_total2(0, now, be_start, forecast3)
+        forecast3_dict = get_wh_total2(0, now, solar_dropoff, forecast3)
         rest_of_today_kWhr3 = forecast3_dict["without"] / 1000
         rest_of_today_kWhr3a = forecast3_dict["period"] / 1000
 
     if forecast4 is not None:
-        forecast4_dict = get_wh_total2(0, now, be_start, forecast4)
+        forecast4_dict = get_wh_total2(0, now, solar_dropoff, forecast4)
         rest_of_today_kWhr4 = forecast4_dict["without"] / 1000
         rest_of_today_kWhr4a = forecast4_dict["period"] / 1000
 

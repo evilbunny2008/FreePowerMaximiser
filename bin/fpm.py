@@ -1832,7 +1832,7 @@ def main():
 
     if balance > discharge_kWhr and winter:
 
-        surplus = 4.5
+        surplus = 4
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 

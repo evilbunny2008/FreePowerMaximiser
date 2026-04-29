@@ -654,7 +654,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
         print(f"max_amount: {max_amount}")
         print(f"house_rate4: {house_rate4}")
 
-    discharge_time_secs = int(math.ceil(surplus / max_rate * 60) * 60)
+    discharge_time_secs = int(math.ceil(surplus / max_rate * 60) * 60) - 60
 
     if DEBUG >= 3:
         print(f"surplus: {surplus}")
@@ -1830,9 +1830,9 @@ def main():
         print()
         print()
 
-    if balance > discharge_kWhr and winter:
+    if winter:
 
-        surplus = 4
+        surplus = curr_kWhr - (max_batt_kWhr * .6)
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 
@@ -1993,7 +1993,7 @@ if __name__ == "__main__":
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
 
-    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85)
+    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85) + 1
     min_grid_percent = configParser.getfloat("Defaults", "min_grid_percent", fallback = 10)
     discharge_percent = configParser.getfloat("Defaults", "discharge_percent", fallback = 40)
 

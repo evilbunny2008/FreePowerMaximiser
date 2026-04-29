@@ -642,9 +642,9 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     max_hours = (be_end - start_time).total_seconds() / 3600
 
-    max_rate = be_max_rate_kW * 1000 - house_rate4
-    if max_rate > max_discharge_rate * 1000 - house_rate4:
-        max_rate = max_discharge_rate * 1000 - house_rate4
+    max_rate = be_max_rate_kW * 1000
+    if max_rate > max_discharge_rate * 1000:
+        max_rate = max_discharge_rate * 1000
 
     max_amount = int(max_rate * max_hours)
 
@@ -1832,7 +1832,7 @@ def main():
 
     if winter:
 
-        surplus = curr_kWhr - (max_batt_kWhr * .6)
+        surplus = curr_kWhr - (max_batt_kWhr * .61)
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 

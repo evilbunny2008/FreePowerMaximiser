@@ -138,7 +138,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
     # Parse timestamps
     parsed = {
-        datetime.fromisoformat(v["period_end"].replace("Z", "+00:00")).astimezone(LOCAL_TZ): v["pv_estimate"]
+        datetime.fromisoformat(v["period_end"].replace("Z", "+00:00")).astimezone(LOCAL_TZ): v["pv_estimate10"]
         for v in solcast_data["forecasts"]
     }
 
@@ -654,7 +654,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
         print(f"max_amount: {max_amount}")
         print(f"house_rate4: {house_rate4}")
 
-    discharge_time_secs = int(math.ceil(surplus / max_rate * 60) * 60) - 60
+    discharge_time_secs = int(math.floor(surplus / max_rate * 60) * 60) - 60
 
     if DEBUG >= 3:
         print(f"surplus: {surplus}")
@@ -1832,7 +1832,7 @@ def main():
 
     if winter:
 
-        surplus = curr_kWhr - (max_batt_kWhr * .61)
+        surplus = curr_kWhr - (max_batt_kWhr * .6)
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 
@@ -2151,7 +2151,7 @@ if __name__ == "__main__":
     actual_fp_end = datetime.combine(now.date(), time(fp_end_hour), tzinfo=LOCAL_TZ)
 
     fp_start = actual_fp_start + timedelta(minutes=1)
-    fp_end = actual_fp_end - timedelta(minutes=2)
+    fp_end = actual_fp_end - timedelta(minutes=1,microseconds=1)
 
     be_start = be_end = None
     if be_start_hour is not None and be_end_hour is not None:

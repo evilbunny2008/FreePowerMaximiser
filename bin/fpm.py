@@ -160,9 +160,20 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if DEBUG >= 3:
         print()
         print(f"new_start_time: {new_start_time}")
+        print(f"end_time: {end_time}")
+        print()
+
+    if end_time >= solar_dropoff:
+        end_time = solar_dropoff
+
+    if DEBUG >= 1:
+        print()
+        print(f"new_start_time: {new_start_time}")
+        print(f"end_time: {end_time}")
+        print()
 
     # Find values for today only
-    today_data = {dt: wh for dt, wh in parsed.items() if new_start_time <= dt <= end_time}
+    today_data = {dt: wh for dt, wh in parsed.items() if new_start_time <= dt < end_time}
 
     if DEBUG >= 3:
         print()
@@ -176,7 +187,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if not today_data:
         return {"with": 0, "without": 0, "period": 0}
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print()
         print(f"today_data:")
         pprint(today_data)
@@ -185,79 +196,119 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
     first_wh = None
     first_period_wh = None
+    last_dt = None
+    last_wh = None
     period_wh = 0
     with_wh = 0
+
+    if len(today_data) > 1:
+        last_dt, last_wh = today_data.popitem()
+
+    start_time2 = actual_fp_start + delta
+    if start_time2 < now:
+        start_time2 = now
+
     # Get cumulative Wh up to current hour
     for dt, kW in today_data.items():
 
+        print(f"dt: {dt}")
+
+        skip_after_this = False
         if first_wh is None:
             first_wh = kW * 500
+            skip_after_this = True
 
-            if DEBUG >= 3:
+            if DEBUG >= 1:
+                print(f"kW: {kW}")
                 print(f"first_wh: {first_wh}")
+                print()
 
-        if actual_fp_start + delta < dt < actual_fp_end + delta and first_period_wh is None:
+        if actual_fp_start + delta <= dt < actual_fp_end + delta and first_period_wh is None:
             first_period_wh = kW * 500
+            skip_after_this = True
 
-            if DEBUG >= 3:
+            if DEBUG >= 1:
+                print(f"kW: {kW}")
                 print(f"first_period_wh: {first_period_wh}")
+                print()
 
-        if dt < start_time:
-            if DEBUG >= 3:
-                print(f"Skipping {dt}")
-
+        if skip_after_this:
             continue
 
         if kW > 0:
 
             wh = kW * 500
 
-            if actual_fp_start + delta <= dt < actual_fp_end + delta:
+            print(f"start_time2: {start_time2}")
+            print(f"actual_fp_end: {actual_fp_end}")
+            print(f"dt: {dt}")
+            print()
+
+            if start_time2 <= dt < actual_fp_end + delta:
                 period_wh += wh
 
             with_wh += wh
 
-            if DEBUG >= 3:
-                print(f"dt: {dt}")
+            if DEBUG >= 1:
                 print(f"kW: {kW}")
                 print(f"period_wh: {period_wh}")
                 print(f"with_wh: {with_wh}")
+                print()
 
     new_time = (30 - (start_time.minute % 30)) / 30
 
-    if DEBUG >= 3:
+    new_end_time = (end_time.minute % 30) / 30
+
+    if DEBUG >= 1:
         print(f"new_time: {new_time}")
+        print(f"new_end_time: {new_end_time}")
+        print()
 
     extra_Wh = 0
     if first_wh is not None:
         extra_Wh = first_wh * new_time
 
-        if DEBUG >= 3:
+        if DEBUG >= 1:
+            print(f"first_wh: {first_wh}")
             print(f"extra_Wh: {extra_Wh}")
+            print()
+
+    if last_wh is not None and last_wh > 0:
+        extra_Wh += last_wh * 500 * new_end_time
+
+        if DEBUG >= 1:
+            print(f"last_wh: {last_wh}")
+            print(f"extra_Wh: {extra_Wh}")
+            print()
 
     extra_period_Wh = 0
     if first_period_wh is not None:
         extra_period_Wh = first_period_wh * new_time
 
-        if DEBUG >= 3:
+        if DEBUG >= 1:
             print(f"extra_period_Wh: {extra_period_Wh}")
+            print()
 
-
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"period_wh: {period_wh}")
         print(f"with_wh: {with_wh}")
+        print()
 
     period_wh += extra_period_Wh
     with_wh += extra_Wh
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"period_wh + extra_period_Wh: {period_wh}")
         print(f"with_wh + extra_Wh: {with_wh}")
+        print()
 
     without_wh = with_wh - period_wh
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"without_wh: {without_wh}")
+        print()
+
+    #sys.exit()
 
     return {"with": with_wh, "without": without_wh, "period": period_wh}
 
@@ -642,9 +693,9 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     max_hours = (be_end - start_time).total_seconds() / 3600
 
-    max_rate = be_max_rate_kW * 1000
-    if max_rate > max_discharge_rate * 1000:
-        max_rate = max_discharge_rate * 1000
+    max_rate = be_max_rate_kW * 1000 - house_rate4
+    if max_rate > max_discharge_rate * 1000 - house_rate4:
+        max_rate = max_discharge_rate * 1000 - house_rate4
 
     max_amount = int(max_rate * max_hours)
 
@@ -656,14 +707,16 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     discharge_time_secs = int(math.floor(surplus / max_rate * 60) * 60) - 60
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"surplus: {surplus}")
         print(f"discharge_time_secs: {discharge_time_secs}")
+        print()
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"end_time: {end_time}")
+        print()
 
     if end_time > be_end:
         end_time = be_end
@@ -1392,10 +1445,17 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
             solar_production1[period] = forecast1_dict["with"] / 1000
 
             if period != 8:
+                #print(f"solar_production1[{period}]: {solar_production1[period]}")
+                #print(f"time_period_in_hours[{period}]: {time_period_in_hours[period]}")
+                #print(f"solcast_under_estimate: {solcast_under_estimate}")
                 solar_rate[period] = solar_production1[period] / time_period_in_hours[period] * solcast_under_estimate
+                #print(f"solar_rate[{period}]: {solar_rate[period]}")
             else:
-                 hrs = (fp_end - fp_start).total_seconds() / 3600
-                 solar_rate[period] = forecast1_dict["period"] / hrs * solcast_under_estimate
+                hrs = (fp_end - fp_start).total_seconds() / 3600
+                #print(f"solar_production1[{period}]: {solar_production1[period]}")
+                #print(f"hrs: {hrs}")
+                #print(f"solcast_under_estimate: {solcast_under_estimate}")
+                solar_rate[period] = forecast1_dict["period"] / hrs * solcast_under_estimate
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(period, start_time, period_end_time, forecast2)
@@ -1753,6 +1813,8 @@ def main():
 
         if balance_by_sd < charge_kWhr:
 
+            period = 1
+
             deficit = charge_kWhr - balance_by_sd
 
             print(f"There may be a deficit of {deficit:.2f}kWhrs by {start_times[3].strftime(output_time_format).lower()}")
@@ -1763,7 +1825,9 @@ def main():
 
             charge_rate = round(deficit * 1000 / charge_hrs)
 
-            print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period])}W from solar")
+            print(f"solar_rate[{period}]: {solar_rate[period]}")
+
+            print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period] * 1000)}W from solar")
 
             print()
             print()
@@ -1821,18 +1885,9 @@ def main():
             print()
 
     surplus = 0
-    if balance > discharge_kWhr and not winter:
+    if balance > discharge_kWhr:
 
         surplus = balance - discharge_kWhr
-
-        print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
-
-        print()
-        print()
-
-    if winter:
-
-        surplus = curr_kWhr - (max_batt_kWhr * .6)
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 
@@ -1993,7 +2048,7 @@ if __name__ == "__main__":
     configParser = configparser.ConfigParser(allow_no_value = True)
     configParser.read(args.config)
 
-    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85) + 1
+    charge_percent = configParser.getfloat("Defaults", "charge_percent", fallback = 85)
     min_grid_percent = configParser.getfloat("Defaults", "min_grid_percent", fallback = 10)
     discharge_percent = configParser.getfloat("Defaults", "discharge_percent", fallback = 40)
 
@@ -2143,7 +2198,7 @@ if __name__ == "__main__":
     LOCAL_TZ = ZoneInfo(tz)
 
     now = now_really = datetime.now(LOCAL_TZ)
-    #now = datetime(2026, 3, 21, 13, 45, tzinfo=LOCAL_TZ)
+    #now = datetime(2026, 5, 1, 13, 44, tzinfo=LOCAL_TZ)
 
     output_time_format = "%-I:%M%p"
 

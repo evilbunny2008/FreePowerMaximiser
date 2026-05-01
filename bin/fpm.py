@@ -166,7 +166,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if end_time >= solar_dropoff:
         end_time = solar_dropoff
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print()
         print(f"new_start_time: {new_start_time}")
         print(f"end_time: {end_time}")
@@ -187,7 +187,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if not today_data:
         return {"with": 0, "without": 0, "period": 0}
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print()
         print(f"today_data:")
         pprint(today_data)
@@ -218,7 +218,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
             first_wh = kW * 500
             skip_after_this = True
 
-            if DEBUG >= 1:
+            if DEBUG >= 3:
                 print(f"kW: {kW}")
                 print(f"first_wh: {first_wh}")
                 print()
@@ -227,7 +227,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
             first_period_wh = kW * 500
             skip_after_this = True
 
-            if DEBUG >= 1:
+            if DEBUG >= 3:
                 print(f"kW: {kW}")
                 print(f"first_period_wh: {first_period_wh}")
                 print()
@@ -249,7 +249,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
             with_wh += wh
 
-            if DEBUG >= 1:
+            if DEBUG >= 3:
                 print(f"kW: {kW}")
                 print(f"period_wh: {period_wh}")
                 print(f"with_wh: {with_wh}")
@@ -259,7 +259,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
     new_end_time = (end_time.minute % 30) / 30
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"new_time: {new_time}")
         print(f"new_end_time: {new_end_time}")
         print()
@@ -268,7 +268,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if first_wh is not None:
         extra_Wh = first_wh * new_time
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"first_wh: {first_wh}")
             print(f"extra_Wh: {extra_Wh}")
             print()
@@ -276,7 +276,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if last_wh is not None and last_wh > 0:
         extra_Wh += last_wh * 500 * new_end_time
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"last_wh: {last_wh}")
             print(f"extra_Wh: {extra_Wh}")
             print()
@@ -285,11 +285,11 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     if first_period_wh is not None:
         extra_period_Wh = first_period_wh * new_time
 
-        if DEBUG >= 1:
+        if DEBUG >= 3:
             print(f"extra_period_Wh: {extra_period_Wh}")
             print()
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"period_wh: {period_wh}")
         print(f"with_wh: {with_wh}")
         print()
@@ -297,14 +297,14 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     period_wh += extra_period_Wh
     with_wh += extra_Wh
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"period_wh + extra_period_Wh: {period_wh}")
         print(f"with_wh + extra_Wh: {with_wh}")
         print()
 
     without_wh = with_wh - period_wh
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"without_wh: {without_wh}")
         print()
 
@@ -707,14 +707,14 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     discharge_time_secs = int(math.floor(surplus / max_rate * 60) * 60) - 60
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"surplus: {surplus}")
         print(f"discharge_time_secs: {discharge_time_secs}")
         print()
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"end_time: {end_time}")
         print()
 

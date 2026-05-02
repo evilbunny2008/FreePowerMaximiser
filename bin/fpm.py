@@ -211,7 +211,7 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     # Get cumulative Wh up to current hour
     for dt, kW in today_data.items():
 
-        print(f"dt: {dt}")
+        #print(f"dt: {dt}")
 
         skip_after_this = False
         if first_wh is None:
@@ -239,10 +239,11 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
             wh = kW * 500
 
-            print(f"start_time2: {start_time2}")
-            print(f"actual_fp_end: {actual_fp_end}")
-            print(f"dt: {dt}")
-            print()
+            if DEBUG >= 3:
+                print(f"start_time2: {start_time2}")
+                print(f"actual_fp_end: {actual_fp_end}")
+                print(f"dt: {dt}")
+                print()
 
             if start_time2 <= dt < actual_fp_end + delta:
                 period_wh += wh

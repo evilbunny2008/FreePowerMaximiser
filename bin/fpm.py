@@ -1448,15 +1448,13 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
             if period != 8:
                 #print(f"solar_production1[{period}]: {solar_production1[period]}")
                 #print(f"time_period_in_hours[{period}]: {time_period_in_hours[period]}")
-                #print(f"solcast_under_estimate: {solcast_under_estimate}")
-                solar_rate[period] = solar_production1[period] / time_period_in_hours[period] * solcast_under_estimate
+                solar_rate[period] = solar_production1[period] / time_period_in_hours[period]
                 #print(f"solar_rate[{period}]: {solar_rate[period]}")
             else:
                 hrs = (fp_end - fp_start).total_seconds() / 3600
                 #print(f"solar_production1[{period}]: {solar_production1[period]}")
                 #print(f"hrs: {hrs}")
-                #print(f"solcast_under_estimate: {solcast_under_estimate}")
-                solar_rate[period] = forecast1_dict["period"] / hrs * solcast_under_estimate
+                solar_rate[period] = forecast1_dict["period"] / hrs
 
         if forecast2 is not None:
             forecast2_dict = get_wh_total(period, start_time, period_end_time, forecast2)
@@ -1475,12 +1473,6 @@ def calc_usage_and_production(now, period, period_start_time, period_end_time):
                 print(f"solar_production2[{period}] until {period_end_time.strftime(output_time_format).lower()}: {solar_production2[period]:.2f}kWhrs")
 
             print()
-
-        if solar_production1[period] > 0 and solcast_under_estimate != 1:
-            solar_production1[period] *= solcast_under_estimate
-
-        if solar_production2[period] > 0 and solcast_under_estimate != 1:
-            solar_production2[period] *= solcast_under_estimate
 
 def main():
 
@@ -2089,14 +2081,8 @@ if __name__ == "__main__":
         sys.exit()
 
     solcast_apikey = configParser.get("Solcast", "apikey", fallback = None)
-    solcast_under_estimate = configParser.getfloat("Solcast", "under_estimate", fallback = None)
     solcast_siteid1 = configParser.get("Solcast", "siteid1", fallback = None)
     solcast_siteid2 = configParser.get("Solcast", "siteid2", fallback = None)
-
-    if solcast_under_estimate is None or solcast_under_estimate < 0:
-        solcast_under_estimate = 0
-
-    solcast_under_estimate = (100 - solcast_under_estimate) / 100
 
     fsolar_tilt1 = configParser.getfloat("Forecast.Solar", "tilt1", fallback = None)
     fsolar_tilt2 = configParser.getfloat("Forecast.Solar", "tilt2", fallback = None)

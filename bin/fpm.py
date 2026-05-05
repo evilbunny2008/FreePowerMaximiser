@@ -693,7 +693,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     max_amount = int(max_rate * max_hours)
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"max_hours: {max_hours}")
         print(f"max_rate: {max_rate}")
         print(f"max_amount: {max_amount}")
@@ -701,21 +701,21 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     discharge_time_secs = int(math.floor(surplus / max_rate * 60) * 60) - 60
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"surplus: {surplus}")
         print(f"discharge_time_secs: {discharge_time_secs}")
         print()
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"end_time: {end_time}")
         print()
 
     if end_time > be_end:
         end_time = be_end
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"end_time: {end_time}")
 
     discharge_amount2 = 0
@@ -769,8 +769,10 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     if start_time == be_start and DEBUG >= 1:
         print(f"You may earn up to ${earn1:.2f} exporting {(surplus / 1000):.2f}kWh between {be_start.strftime(output_time_format).lower()} and {be_end.strftime(output_time_format).lower()}")
+        print()
     elif DEBUG >= 1:
         print(f"You may earn up to ${earn1:.2f} exporting {(surplus / 1000):.2f}kWh between now and {be_end.strftime(output_time_format).lower()}")
+        print()
 
     periods.extend([{"enable": 1,
                      "startHour": be_start.hour,
@@ -1928,15 +1930,16 @@ def main():
         print()
         print()
 
-    balance_tomorrow = balance + max_charge_rate * charge_hrs * .9
+    balance_tomorrow = balance_by_su + max_charge_rate * charge_hrs
 
     if DEBUG >= 3:
         print(f"balance_tomorrow: {balance_tomorrow}")
 
     if balance_tomorrow < charge_kWhr:
-        less_percent = math.ceil(((charge_kWhr - balance_tomorrow) / max_batt_kWhr) * 100)
+        less_percent = ((charge_kWhr - balance_tomorrow) / max_batt_kWhr) * 100
 
-        print(f"less_percent: {less_percent}")
+        if DEBUG >= 3:
+            print(f"less_percent: {less_percent:.1f}")
 
         if less_percent > 0:
             new_percent = discharge_percent - less_percent

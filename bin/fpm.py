@@ -138,18 +138,18 @@ def get_wh_total(period, start_time, end_time, solcast_data):
 
     # Parse timestamps
     parsed = {
-        datetime.fromisoformat(v["period_end"].replace("Z", "+00:00")).astimezone(LOCAL_TZ): v["pv_estimate10"]
+        datetime.fromisoformat(v["period_end"].replace("Z", "+00:00")).astimezone(LOCAL_TZ): v["pv_estimate"]
         for v in solcast_data["forecasts"]
     }
 
     delta = timedelta(microseconds=0)
-    if period == 8:
+    if period >= 7:
         delta = timedelta(days=1)
 
     if DEBUG >= 3:
-        print()
         print(f"parsed:")
         pprint(parsed)
+        print()
 
     new_minute = 0
     if start_time.minute >= 30:
@@ -158,17 +158,14 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     new_start_time = start_time.replace(minute=new_minute, second=0, microsecond=0)
 
     if DEBUG >= 3:
-        print()
+        print(f"start_time: {start_time}")
         print(f"new_start_time: {new_start_time}")
         print(f"end_time: {end_time}")
-        print()
 
-    if end_time >= solar_dropoff:
-        end_time = solar_dropoff
+    if end_time >= solar_dropoff + delta:
+        end_time = solar_dropoff + delta
 
     if DEBUG >= 3:
-        print()
-        print(f"new_start_time: {new_start_time}")
         print(f"end_time: {end_time}")
         print()
 
@@ -176,10 +173,8 @@ def get_wh_total(period, start_time, end_time, solcast_data):
     today_data = {dt: wh for dt, wh in parsed.items() if new_start_time <= dt < end_time}
 
     if DEBUG >= 3:
-        print()
         print(f"today_data:")
         pprint(today_data)
-        print()
         print()
 
     today_data = {dt - timedelta(minutes=30): wh for dt, wh in parsed.items() if new_start_time <= dt - timedelta(minutes=30) < end_time}
@@ -188,10 +183,8 @@ def get_wh_total(period, start_time, end_time, solcast_data):
         return {"with": 0, "without": 0, "period": 0}
 
     if DEBUG >= 3:
-        print()
         print(f"today_data:")
         pprint(today_data)
-        print()
         print()
 
     first_wh = None
@@ -1615,6 +1608,7 @@ def main():
     min_grid_kWhr = max_batt_kWhr * min_grid_percent / 100
     charge_kWhr = max_batt_kWhr * charge_percent / 100
     discharge_kWhr = max_batt_kWhr * discharge_percent / 100
+    charge_hrs = (fp_end - fp_start).total_seconds() / 3600
 
     if DEBUG >= 2:
         print(f"max_batt_kWhr: {max_batt_kWhr:.2f}kWhrs")
@@ -1719,30 +1713,37 @@ def main():
     period = 0
     calc_usage_and_production(now, period, midnight - timedelta(days=1), actual_fp_start)
 
-    period += 1
+    period = 1
     calc_usage_and_production(now, period, actual_fp_start, actual_fp_end)
 
-    period += 1
+    period = 2
     calc_usage_and_production(now, period, actual_fp_end, solar_dropoff)
 
-    period += 1
+    period = 3
     calc_usage_and_production(now, period, solar_dropoff, be_start)
 
-    period += 1
+    period = 4
     calc_usage_and_production(now, period, be_start, be_end)
 
-    period += 1
+    period = 5
     calc_usage_and_production(now, period, nbe_start, nbe_end)
 
-    period += 1
+    period = 6
     calc_usage_and_production(now, period, nbe_end, midnight)
 
-    period += 1
+    period = 7
     calc_usage_and_production(now, period, midnight, solar_start_next)
 
-    period += 1
-    until_time = nbe_start1 + timedelta(days=1)
-    calc_usage_and_production(now, period, solar_start_next, until_time)
+    period = 8
+    calc_usage_and_production(now, period, midnight, actual_fp_start + timedelta(days=1))
+
+    period = 9
+    calc_usage_and_production(now, period, actual_fp_start + timedelta(days=1), actual_fp_end + timedelta(days=1))
+
+    period = 10
+    from_time = actual_fp_end + timedelta(days=1)
+    until_time = solar_dropoff + timedelta(days=1)
+    calc_usage_and_production(now, period, from_time, until_time)
 
     if DEBUG >= 3:
 
@@ -1851,6 +1852,11 @@ def main():
         print()
         print()
 
+    if charge_rate > charge_rate_limit * 1000:
+        charge_rate = charge_rate_limit * 1000
+
+    charge_rate = int(charge_rate)
+
     for period in range(4, 6):
         if now < start_times[period]:
 
@@ -1872,82 +1878,86 @@ def main():
             solar_production2_kWhr = sum(v for k, v in solar_production2.items() if k <= period and k != 1)
             balance = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr + deficit
 
+            if period == 6:
+                balance_by_midnight = balance
+            elif period == 7:
+                balance_by_su = balance
+
             print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance:.2f}kWhrs/{(balance / max_batt_kWhr * 100):.1f}%")
 
             print()
             print()
 
-    surplus = 0
-    if balance > discharge_kWhr:
+    period = 8
+    if now < end_times[period]:
 
-        surplus = balance - discharge_kWhr
+        balance = balance_by_midnight - max_kWhr[8] + solar_production1[8] + solar_production2[8]
+
+        if DEBUG >= 3:
+            print(f"balance_by_midnight: {balance_by_midnight}")
+            print(f"max_kWhr[7]: {max_kWhr[7]}")
+            print(f"solar_production1[7]: {solar_production1[7]}")
+            print(f"solar_production2[7]: {solar_production2[7]}")
+
+        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance:.2f}kWhrs/{(balance / max_batt_kWhr * 100):.1f}%")
+
+        print()
+        print()
+
+    period = 9
+    if now < end_times[period]:
+
+        solar_production1_kWhr = sum(v for k, v in solar_production1.items() if 8 <= k <= 9)
+        balance = balance_by_midnight - max_kWhr[8] + solar_production1_kWhr + solar_production2[8]
+
+        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance:.2f}kWhrs/{(balance / max_batt_kWhr * 100):.1f}%")
+
+        print()
+        print()
+
+    period = 10
+    if now < end_times[period]:
+
+        house_usage_kWhr = sum(v for k, v in max_kWhr.items() if k == 8 or k == 10)
+        solar_production1_kWhr = sum(v for k, v in solar_production1.items() if 8 <= k <= 10)
+        solar_production2_kWhr = sum(v for k, v in solar_production2.items() if k == 8 or k == 10)
+        balance = balance_by_midnight - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr
+
+        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance:.2f}kWhrs/{(balance / max_batt_kWhr * 100):.1f}%")
+
+        print()
+        print()
+
+    balance_tomorrow = balance + max_charge_rate * charge_hrs * .9
+
+    if DEBUG >= 3:
+        print(f"balance_tomorrow: {balance_tomorrow}")
+
+    if balance_tomorrow < charge_kWhr:
+        less_percent = math.ceil(((charge_kWhr - balance_tomorrow) / max_batt_kWhr) * 100)
+
+        print(f"less_percent: {less_percent}")
+
+        if less_percent > 0:
+            new_percent = discharge_percent - less_percent
+
+            discharge_kWhr = max_batt_kWhr * new_percent / 100
+
+    surplus = 0
+    if balance_by_su > discharge_kWhr:
+
+        surplus = balance_by_su - discharge_kWhr
+
+        surplus_percent = round(surplus / max_batt_kWhr * 100)
+
+        surplus = max_batt_kWhr * (surplus_percent / 100)
 
         print(f"There may be a surplus in the battery tomorrow of {surplus:.2f}kWhrs/{(surplus / max_batt_kWhr * 100):.1f}%")
 
         print()
         print()
 
-    if now > be_end:
-
-        period = 8
-
-        house_usage_kWhr = sum(v for k, v in max_kWhr.items() if 6 <= k <= period)
-        solar_production1_kWhr = solar_production1[period]
-        solar_production2_kWhr = solar_production2[period]
-        balance_by_sd = curr_kWhr - house_usage_kWhr + solar_production1_kWhr + solar_production2_kWhr - surplus
-
-        print(f"Solcast forecast for tomorrow until {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}: {(solar_production1_kWhr + solar_production2_kWhr):.2f}kWhrs")
-
-        print()
-
-        print(f"{period} Battery charge by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()} may be {balance_by_sd:.2f}kWhrs/{(balance_by_sd / max_batt_kWhr * 100):.1f}%")
-
-        print()
-
-        if balance_by_sd < charge_kWhr:
-
-            if DEBUG >= 3:
-                print(f"house_usage_kWhr: {house_usage_kWhr:.2f}kWhrs")
-                print(f"solar_production1_kWhr: {solar_production1_kWhr:.2f}kWhrs")
-                print(f"solar_production2_kWhr: {solar_production2_kWhr}")
-                print(f"balance_by_sd: {balance_by_sd:.2f}kWhrs")
-
-            deficit = charge_kWhr - balance_by_sd
-
-            print(f"There may be a deficit of {deficit:.2f}kWhrs by {(end_times[period] + timedelta(microseconds=1)).strftime(output_time_format).lower()}")
-
-            if DEBUG >= 3:
-
-                print(f"(fp_end - fp_start).total_seconds(): {round((fp_end - fp_start).total_seconds())}")
-
-                print(f"(fp_end - fp_start).total_seconds() / 3600: {((fp_end - fp_start).total_seconds() / 3600):.2f}")
-
-            charge_hrs = (fp_end - fp_start).total_seconds() / 3600
-
-            if DEBUG >= 3:
-
-                print(f"charge_hrs: {charge_hrs:.2f}")
-
-            charge_rate = round(deficit * 1000 / charge_hrs)
-
-            print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period])}W from solar")
-
-        print()
-        print()
-
-    if charge_rate < 1:
-        charge_rate = 1
-
-    if charge_rate > charge_rate_limit * 1000:
-        charge_rate = charge_rate_limit * 1000
-
-    charge_rate = int(charge_rate)
-
     rate4 = rate5 = 0
-    if period != 8:
-        rate4 = max_kWhr[4] * 1000 / time_period_in_hours[4]
-        rate5 = max_kWhr[5] * 1000 / time_period_in_hours[5]
-
     new_periods = generate_periods(period, now, charge_rate, surplus * 1000, rate4, rate5, earning)
 
     if not upload_schedule:

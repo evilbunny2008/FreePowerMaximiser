@@ -693,7 +693,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     max_amount = int(max_rate * max_hours)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"max_hours: {max_hours}")
         print(f"max_rate: {max_rate}")
         print(f"max_amount: {max_amount}")
@@ -701,21 +701,21 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     discharge_time_secs = int(math.floor(surplus / max_rate * 60) * 60) - 60
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"surplus: {surplus}")
         print(f"discharge_time_secs: {discharge_time_secs}")
         print()
 
     end_time = start_time + timedelta(seconds=discharge_time_secs)
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"end_time: {end_time}")
         print()
 
     if end_time > be_end:
         end_time = be_end
 
-    if DEBUG >= 1:
+    if DEBUG >= 3:
         print(f"end_time: {end_time}")
 
     discharge_amount2 = 0
@@ -1502,13 +1502,13 @@ def main():
             pprint(real)
             sys.exit()
 
-            batt = openapi.get_battery()
-            pprint(batt)
-            sys.exit()
+            #batt = openapi.get_battery()
+            #pprint(batt)
+            #sys.exit()
 
-            history = openapi.get_history("today", v=["batCurrent"])
-            pprint(history)
-            sys.exit()
+            #history = openapi.get_history("today", v=["batCurrent"])
+            #pprint(history)
+            #sys.exit()
 
         if do_history:
 
@@ -1942,12 +1942,12 @@ def main():
             print(f"less_percent: {less_percent:.1f}")
 
         if less_percent > 0:
-            new_percent = discharge_percent - less_percent
+            new_percent = discharge_percent + less_percent
 
             discharge_kWhr = max_batt_kWhr * new_percent / 100
 
     surplus = 0
-    if balance_by_su > discharge_kWhr:
+    if balance_tomorrow > discharge_kWhr:
 
         surplus = balance_by_su - discharge_kWhr
 

@@ -1696,11 +1696,13 @@ def main():
 
             charge_hrs = (fp_end - start_time).total_seconds() / 3600
 
-            print(f"charge_hrs: {charge_hrs:.2f}")
+            if DEBUG >= 3:
+                print(f"charge_hrs: {charge_hrs:.2f}")
 
             charge_rate = round(deficit * 1000 / charge_hrs)
 
-            print(f"solar_rate[{period}]: {solar_rate[period]}")
+            if DEBUG >= 3:
+                print(f"solar_rate[{period}]: {solar_rate[period]}")
 
             print(f"The battery requires charging from the grid at {round(charge_rate)}W + {round(solar_rate[period] * 1000)}W from solar")
 

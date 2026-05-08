@@ -17,6 +17,7 @@ import pickle
 import re
 import requests
 import sys
+import time
 
 from astral import Observer, sun, SunDirection
 from datetime import datetime, time, timedelta
@@ -88,8 +89,15 @@ def should_download_now(schedule_time, filename):
 
     return True
 
-def perform_download(url, filename):
+def perform_download(url, filename, attempt = 0, lastError = ""):
     """Perform the actual download."""
+
+    if attempt >= 3:
+        return {"success": False, "code": -1, "error": lastError, "result": None}
+
+    if attempt >= 1:
+        print("Sleeping for 5 seconds before retrying...")
+        time.sleep(5)
 
     if DEBUG >= 1:
         print(f"Fetching fresh data for {redact_api_key(url)} and saving it to {filename}...")
@@ -103,14 +111,14 @@ def perform_download(url, filename):
             if DEBUG >= 1:
                 print(f"Failed to download: {redact_api_key(response.url)}, status_code: {statcode}, reason: {response.reason}...")
 
-            return {"success": False, "code": statcode, "error": response.reason, "result": None}
+            return perform_download(url, filename, attempt + 1, f"Error {statcode} returned from remote server")
 
         response.raise_for_status()
 
         result = response.json()
 
         if not result:
-            return {"success": False, "code": -1, "error": "nothing returned", "result": None}
+            return perform_download(url, filename, attempt + 1, "Download failed! No data returned")
 
         if DEBUG >= 1:
             print(f"Successfully downloaded from: {redact_api_key(response.url)}")
@@ -124,9 +132,7 @@ def perform_download(url, filename):
         if DEBUG >= 1:
             print(f"Download failed! e: {str(e)}")
 
-        #return {"success": False, "code": -2, "error": "nothing returned", "result": None}
-
-        raise e
+        return perform_download(url, filename, attempt + 1, f"Download failed! e: {str(e)}")
 
 def get_wh_total(period, start_time, end_time, solcast_data):
 
@@ -511,21 +517,6 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
         export_fdPwr2 = int(nbe_max_rate_kW * 1000)
 
     periods.extend([{"enable": 1,
-                     "startHour": 0,
-                     "startMinute": 0,
-                     "endHour": fp_start.hour,
-                     "endMinute": fp_start.minute,
-                     "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": import_fdPwr,
-                                    "fdSoc": round(min_grid_percent),
-                                    "importLimit": 100000,
-                                    "maxSoc": 100,
-                                    "minSocOnGrid": round(min_grid_percent),
-                                    "pvLimit": 20000,
-                                    "reactivePower": 0},
-                     "workMode": "SelfUse"}])
-
-    periods.extend([{"enable": 1,
                      "startHour": fp_start.hour,
                      "startMinute": fp_start.minute,
                      "endHour": fp_end.hour,
@@ -541,58 +532,10 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                      "workMode": "ForceCharge"}])
 
     if surplus == 0 or be_start is None or be_end is None:
-
-        periods.extend([{"enable": 1,
-                         "startHour": fp_end.hour,
-                         "startMinute": fp_end.minute,
-                         "endHour": 23,
-                         "endMinute": 59,
-                         "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": import_fdPwr,
-                                        "fdSoc": round(min_grid_percent),
-                                        "importLimit": 100000,
-                                        "maxSoc": 100,
-                                        "minSocOnGrid": round(min_grid_percent),
-                                        "pvLimit": 20000,
-                                        "reactivePower": 0},
-                         "workMode": "SelfUse"}])
-
         return periods
 
     surplus1 = 0
-    if surplus1 == 0:
-
-        periods.extend([{"enable": 1,
-                         "startHour": fp_end.hour,
-                         "startMinute": fp_end.minute,
-                         "endHour": be_start.hour,
-                         "endMinute": be_start.minute,
-                         "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": import_fdPwr,
-                                        "fdSoc": round(min_grid_percent),
-                                        "importLimit": 100000,
-                                        "maxSoc": 100,
-                                        "minSocOnGrid": round(min_grid_percent),
-                                        "pvLimit": 20000,
-                                        "reactivePower": 0},
-                         "workMode": "SelfUse"}])
-
-    else:
-
-        periods.extend([{"enable": 1,
-                         "startHour": fp_end.hour,
-                         "startMinute": fp_end.minute,
-                         "endHour": nbe_start1.hour,
-                         "endMinute": nbe_start1.minute,
-                         "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": import_fdPwr,
-                                        "fdSoc": round(min_grid_percent),
-                                        "importLimit": 100000,
-                                        "maxSoc": 100,
-                                        "minSocOnGrid": round(min_grid_percent),
-                                        "pvLimit": 20000,
-                                        "reactivePower": 0},
-                         "workMode": "SelfUse"}])
+    if surplus1 != 0:
 
         start_time = nbe_start1
         if start_time < now:
@@ -663,23 +606,6 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                              "pvLimit": 20000,
                              "reactivePower": 0},
                          "workMode": "ForceDischarge"}])
-
-        if end_time < be_start:
-
-            periods.extend([{"enable": 1,
-                             "startHour": end_time.hour,
-                             "startMinute": end_time.minute,
-                             "endHour": be_start.hour,
-                             "endMinute": be_start.minute,
-                             "extraParam": {"exportLimit": 100000,
-                                            "fdPwr": import_fdPwr,
-                                            "fdSoc": round(min_grid_percent),
-                                            "importLimit": 100000,
-                                            "maxSoc": 100,
-                                            "minSocOnGrid": round(min_grid_percent),
-                                            "pvLimit": 20000,
-                                            "reactivePower": 0},
-                             "workMode": "SelfUse"}])
 
     start_time = be_start
     if start_time < now:
@@ -791,39 +717,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
 
     if discharge_amount2 <= 0 or nbe_start is None or nbe_end is None:
 
-        periods.extend([{"enable": 1,
-                         "startHour": end_time.hour,
-                         "startMinute": end_time.minute,
-                         "endHour": 23,
-                         "endMinute": 59,
-                         "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": import_fdPwr,
-                                        "fdSoc": round(min_grid_percent),
-                                        "importLimit": 100000,
-                                        "maxSoc": 100,
-                                        "minSocOnGrid": round(min_grid_percent),
-                                        "pvLimit": 20000,
-                                        "reactivePower": 0},
-                         "workMode": "SelfUse"}])
-
         return periods
-
-    if end_time != nbe_start:
-
-        periods.extend([{"enable": 1,
-                         "startHour": end_time.hour,
-                         "startMinute": end_time.minute,
-                         "endHour": nbe_start.hour,
-                         "endMinute": nbe_start.minute,
-                         "extraParam": {"exportLimit": 100000,
-                                        "fdPwr": import_fdPwr,
-                                        "fdSoc": round(min_grid_percent),
-                                        "importLimit": 100000,
-                                        "maxSoc": 100,
-                                        "minSocOnGrid": round(min_grid_percent),
-                                        "pvLimit": 20000,
-                                        "reactivePower": 0},
-                         "workMode": "SelfUse"}])
 
     nstart_time = nbe_start
     if nstart_time < now:
@@ -900,21 +794,6 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
                      "workMode": "ForceDischarge"}])
-
-    periods.extend([{"enable": 1,
-                     "startHour": nend_time.hour,
-                     "startMinute": nend_time.minute,
-                     "endHour": 23,
-                     "endMinute": 59,
-                     "extraParam": {"exportLimit": 100000,
-                                    "fdPwr": import_fdPwr,
-                                    "fdSoc": round(min_grid_percent),
-                                    "importLimit": 100000,
-                                    "maxSoc": 100,
-                                    "minSocOnGrid": round(min_grid_percent),
-                                    "pvLimit": 20000,
-                                    "reactivePower": 0},
-                     "workMode": "SelfUse"}])
 
     return periods
 
@@ -1932,13 +1811,13 @@ def main():
 
     balance_tomorrow = balance_by_su + max_charge_rate * charge_hrs
 
-    if DEBUG >= 3:
+    if DEBUG >= 1:
         print(f"balance_tomorrow: {balance_tomorrow}")
 
     if balance_tomorrow < charge_kWhr:
         less_percent = ((charge_kWhr - balance_tomorrow) / max_batt_kWhr) * 100
 
-        if DEBUG >= 3:
+        if DEBUG >= 1:
             print(f"less_percent: {less_percent:.1f}")
 
         if less_percent > 0:
@@ -1951,7 +1830,12 @@ def main():
 
         surplus = balance_by_su - discharge_kWhr
 
-        surplus_percent = round(surplus / max_batt_kWhr * 100)
+        print(f"surplus: {surplus}")
+        print(f"max_batt_kWhr: {max_batt_kWhr}")
+
+        surplus_percent = math.floor(surplus / max_batt_kWhr * 100)
+
+        print(f"surplus_percent: {surplus_percent}")
 
         surplus = max_batt_kWhr * (surplus_percent / 100)
 
@@ -1959,6 +1843,9 @@ def main():
 
         print()
         print()
+
+    if winter:
+        surplus = 0
 
     rate4 = rate5 = 0
     new_periods = generate_periods(period, now, charge_rate, surplus * 1000, rate4, rate5, earning)

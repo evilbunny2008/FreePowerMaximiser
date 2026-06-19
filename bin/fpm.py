@@ -17,7 +17,7 @@ import pickle
 import re
 import requests
 import sys
-import time
+import time as time_t
 
 from astral import Observer, sun, SunDirection
 from datetime import datetime, time, timedelta
@@ -92,12 +92,12 @@ def should_download_now(schedule_time, filename):
 def perform_download(url, filename, attempt = 0, lastError = ""):
     """Perform the actual download."""
 
-    if attempt >= 3:
+    if attempt >= 10:
         return {"success": False, "code": -1, "error": lastError, "result": None}
 
     if attempt >= 1:
-        print("Sleeping for 5 seconds before retrying...")
-        time.sleep(5)
+        print("Sleeping for 1 seconds before retrying...")
+        time_t.sleep(1)
 
     if DEBUG >= 1:
         print(f"Fetching fresh data for {redact_api_key(url)} and saving it to {filename}...")
@@ -523,9 +523,9 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                      "endMinute": fp_end.minute,
                      "extraParam": {"exportLimit": 100000,
                                     "fdPwr": charge_rate,
-                                    "fdSoc": 100,
+                                    "fdSoc": charge_percent,
                                     "importLimit": 100000,
-                                    "maxSoc": 100,
+                                    "maxSoc": charge_percent,
                                     "minSocOnGrid": round(min_grid_percent),
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
@@ -601,7 +601,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                              "fdPwr": export_fdPwr2,
                              "fdSoc": round(min_grid_percent),
                              "importLimit": 100000,
-                             "maxSoc": 100,
+                             "maxSoc": charge_percent,
                              "minSocOnGrid": round(min_grid_percent),
                              "pvLimit": 20000,
                              "reactivePower": 0},
@@ -709,7 +709,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                                     "fdPwr": export_fdPwr,
                                     "fdSoc": round(min_grid_percent),
                                     "importLimit": 100000,
-                                    "maxSoc": 100,
+                                    "maxSoc": charge_percent,
                                     "minSocOnGrid": round(min_grid_percent),
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
@@ -789,7 +789,7 @@ def generate_periods(period, now, charge_rate, surplus, house_rate4, house_rate5
                                     "fdPwr": export_fdPwr2,
                                     "fdSoc": round(min_grid_percent),
                                     "importLimit": 100000,
-                                    "maxSoc": 100,
+                                    "maxSoc": charge_percent,
                                     "minSocOnGrid": round(min_grid_percent),
                                     "pvLimit": 20000,
                                     "reactivePower": 0},
@@ -1541,6 +1541,10 @@ def main():
     if last_download["solcast2"]["url"] is not None and last_download["solcast2"]["url"].startswith("https://"):
         forecast2 = get_json(now, "solcast2")
 
+    if forecast1 is None or forecast2 is None:
+        print("solcast1 and solcast2 failed to download, exiting...")
+        sys.exit()
+
     if forecast1 is not None:
         forecast1_dict = get_wh_total(0, now, solar_dropoff, forecast1)
         rest_of_today_kWhr1 = forecast1_dict["without"] / 1000
@@ -1555,11 +1559,17 @@ def main():
         forecast3_dict = get_wh_total2(0, now, solar_dropoff, forecast3)
         rest_of_today_kWhr3 = forecast3_dict["without"] / 1000
         rest_of_today_kWhr3a = forecast3_dict["period"] / 1000
+    else:
+        rest_of_today_kWhr3 = 0
+        rest_of_today_kWhr3a = 0
 
     if forecast4 is not None:
         forecast4_dict = get_wh_total2(0, now, solar_dropoff, forecast4)
         rest_of_today_kWhr4 = forecast4_dict["without"] / 1000
         rest_of_today_kWhr4a = forecast4_dict["period"] / 1000
+    else:
+        rest_of_today_kWhr4 = 0
+        rest_of_today_kWhr4a = 0
 
     if now < solar_dropoff:
 
@@ -1850,6 +1860,10 @@ def main():
         surplus = 0
 
     rate4 = rate5 = 0
+
+    if charge_rate >= 100:
+        charge_rate = 10500
+
     new_periods = generate_periods(period, now, charge_rate, surplus * 1000, rate4, rate5, earning)
 
     if not upload_schedule:
